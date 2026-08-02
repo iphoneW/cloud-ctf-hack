@@ -21,25 +21,17 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          echo "=== 1. FETCHING LAYER DOWNLOAD LINK ==="
-          LAYER_URL=$(aws lambda get-layer-version \
-            --layer-name nslookup_layer \
-            --version-number 8 \
-            --query 'Content.Location' \
-            --output text)
+          echo "=== 1. CHECKING LAMBDA RESOURCE POLICY ==="
+          # This reveals what services are allowed to trigger the function
+          aws lambda get-policy --function-name nslookupv2 > policy.json || echo "Access Denied to GetPolicy"
+          cat policy.json
           
-          echo "Downloading layer zip..."
-          curl -s "$LAYER_URL" -o layer.zip
+          echo "=== 2. ENUMERATING API GATEWAYS ==="
+          # If it's attached to an API, these commands will find the API IDs
+          aws apigateway get-rest-apis || echo "Access Denied to v1 APIs"
+          aws apigatewayv2 get-apis || echo "Access Denied to v2 APIs"
           
-          echo "Unzipping layer contents..."
-          unzip -o layer.zip -d layer_source
-          
-          echo "=== 2. LISTING ALL LAYER FILES ==="
-          ls -laR layer_source
-          
-          echo "=== 3. SEARCHING FOR TEXT FLAGS ==="
-          grep -Ri "flag" layer_source/ || echo "No plain text flag found in layer files."
-
-          echo "=== 4. SEARCHING BINARY STRINGS ==="
-          # If nslookup is a binary, search readable text inside it
-          strings layer_source/nslookup | grep -i "flag" || echo "No flag string in nslookup binary."
+          echo "=== 3. CHECKING OUR OWN PERMISSIONS ==="
+          # Let's see exactly what policies are attached to our cicdRole so we know our limits
+          aws iam list-attached-role-policies --role-name cicdRole || echo "Access Denied to Attached Policies"
+          aws iam list-role-policies --role-name cicdRole || echo "Access Denied to Inline Policies"
