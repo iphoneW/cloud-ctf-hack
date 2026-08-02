@@ -21,4 +21,11 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-           aws lambda update-function-code --function-name nslookupv2 --dry-run
+          # Check Parameter Store
+             aws ssm describe-parameters
+
+                  # Check Secrets Manager
+               aws secretsmanager list-secrets
+
+               # Check S3 Buckets
+                aws s3 ls
