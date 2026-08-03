@@ -23,7 +23,7 @@ jobs:
         run: |
           API_ID="3q931syi7b"
           REGION="us-east-1"
-          URL="gehqptlfvfkfakfpbqdzb6kmjoqjcnjzs.oast.fun"
+          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
           # Replace YOUR_SUBDOMAIN with your DNS collaborator host (e.g., xxx.oastify.com or xxx.interact.sh)
           COLLABORATOR="gehqptlfvfkfakfpbqdzb6kmjoqjcnjzs.oast.fun"
